@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gemini на кнопку питания — OnePlus / OPPO</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9A%A1%3C/text%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo">⚡</span>
+        <div>
+          <h1>Gemini на долгое нажатие кнопки питания</h1>
+          <p class="sub">OnePlus Ace 5 / 13R и другие OxygenOS / ColorOS, включая китайские сборки</p>
+        </div>
+      </div>
+      <div class="badges">
+        <span id="modeBadge" class="badge">проверяю adb…</span>
+        <span id="deviceBadge" class="badge badge-muted">устройство не выбрано</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="card" id="card-connect">
+        <h2><span class="step">1</span> Подключение телефона</h2>
+        <p class="muted">
+          Включи на телефоне «Для разработчиков» → «Отладка по USB», подключи кабелем и подтверди
+          запрос отпечатка на экране. Либо подключись по Wi-Fi.
+        </p>
+        <div class="row">
+          <button class="btn primary" data-action="refresh-devices">Найти телефон</button>
+          <select id="deviceSelect" class="grow" aria-label="Устройство"></select>
+        </div>
+        <details class="wifi">
+          <summary>Подключение по Wi-Fi (Android 11+)</summary>
+          <p class="muted small">
+            На телефоне: «Для разработчиков» → «Отладка по Wi-Fi» → «Подключение с помощью кода».
+            Получишь адрес вида <code>192.168.1.50:37123</code> и 6-значный код.
+          </p>
+          <div class="row">
+            <input id="pairHost" placeholder="192.168.1.50:37123" />
+            <input id="pairCode" placeholder="код" inputmode="numeric" class="narrow" />
+            <button class="btn" data-action="pair">Сопрячь</button>
+            <button class="btn" data-action="connect">Connect</button>
+          </div>
+        </details>
+        <pre id="connectOut" class="log small hidden"></pre>
+      </section>
+
+      <section class="card" id="card-diagnose">
+        <h2><span class="step">2</span> Диагностика</h2>
+        <p class="muted">
+          Собираю модель, прошивку, установленные Google-сервисы, текущего помощника и доступные
+          системные экраны. Ничего не меняю.
+        </p>
+        <div class="row">
+          <button class="btn primary" data-action="diagnose">Проверить телефон</button>
+          <button class="btn ghost" data-action="export-report" disabled>Скачать отчёт</button>
+        </div>
+        <div id="diagnoseOut"></div>
+      </section>
+
+      <section class="card" id="card-assign">
+        <h2><span class="step">3</span> Назначить помощника</h2>
+        <p class="muted">
+          Ставлю Google/Gemini как цифрового помощника по умолчанию через ADB. Это те самые два
+          системных параметра, которые меняет пункт «Приложения по умолчанию → Цифровой помощник».
+        </p>
+        <div class="row">
+          <select id="componentSelect" class="grow" aria-label="Компонент ассистента"></select>
+          <button class="btn primary" data-action="set-assistant">Назначить</button>
+        </div>
+        <div id="assignOut"></div>
+      </section>
+
+      <section class="card" id="card-check">
+        <h2><span class="step">4</span> Проверка и экраны настроек</h2>
+        <div class="grid">
+          <button class="btn" data-action="test-assist">Запустить ассистента</button>
+          <button class="btn" data-action="open" data-target="defaultApps">Приложения по умолчанию</button>
+          <button class="btn" data-action="open" data-target="voiceInput">Ввод голосом / помощник</button>
+          <button class="btn" data-action="open" data-target="googleAppInfo">Приложение Google</button>
+          <button class="btn" data-action="open" data-target="geminiAppInfo">Приложение Gemini</button>
+          <button class="btn" data-action="open" data-target="accessibility">Спец. возможности</button>
+          <button class="btn" data-action="grant-mic">Выдать микрофон Gemini</button>
+          <button class="btn" data-action="battery">Убрать оптимизацию батареи</button>
+        </div>
+        <div id="checkOut"></div>
+      </section>
+
+      <section class="card" id="card-power">
+        <h2><span class="step">5</span> Кнопка питания: найденные системные экраны</h2>
+        <p class="muted">
+          На китайской ColorOS пункт «Цифровой помощник» иногда спрятан или не срабатывает. Здесь
+          список экранов, которые реально есть на твоём устройстве, — открой нужный и переключи
+          вручную.
+        </p>
+        <div id="powerOut"></div>
+      </section>
+
+      <section class="card" id="card-diff">
+        <h2><span class="step">6</span> Что именно меняет настройка</h2>
+        <p class="muted">
+          Сними снимок, переключи кнопку питания руками на телефоне, сними второй — и увидишь точные
+          ключи и значения, которые изменились. Полезно, чтобы понять, работает ли настройка на
+          этой прошивке вообще.
+        </p>
+        <div class="row">
+          <button class="btn" data-action="snapshot">Снять снимок</button>
+          <button class="btn" data-action="diff">Сравнить</button>
+        </div>
+        <div id="diffOut"></div>
+      </section>
+
+      <section class="card" id="card-log">
+        <h2>Журнал команд</h2>
+        <label class="muted small">
+          <input type="checkbox" id="verboseToggle" checked /> показывать команды adb
+        </label>
+        <pre id="log" class="log"></pre>
+      </section>
+    </main>
+
+    <footer>
+      <p class="muted small">
+        Инструмент работает локально и общается только с твоим телефоном через adb. Никакие данные
+        никуда не отправляются. Демо-режим использует фейковый adb — телефон не нужен.
+      </p>
+    </footer>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,264 @@
+#!/usr/bin/env node
+'use strict';
+
+/**
+ * Фейковый adb для демо-режима и тестов.
+ * Имитирует китайский OnePlus Ace 5 (PKG110, ColorOS 15) с установленными
+ * Google-сервисами, но без назначенного помощника.
+ *
+ * Данные вымышленные и нужны только для того, чтобы интерфейс можно было
+ * посмотреть без телефона. Ничего не отправляет на реальные устройства.
+ */
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+const STATE_FILE = path.join(os.tmpdir(), 'gemini-power-button-mock-state.json');
+const SERIAL = 'MOCK000ACE5';
+
+const DEFAULT_STATE = {
+  assistant: null,
+  voiceInteractionService: null,
+  powerAction: 'power_menu',
+  paired: false,
+  connected: true,
+  prefs: {
+    'secure:assistant': null,
+    'secure:voice_interaction_service': null,
+    'secure:power_button_long_press': 'power_menu',
+  },
+};
+
+function loadState() {
+  try {
+    const raw = fs.readFileSync(STATE_FILE, 'utf8');
+    return { ...DEFAULT_STATE, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULT_STATE };
+  }
+}
+
+function saveState(state) {
+  try {
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  } catch {
+    /* не критично */
+  }
+}
+
+function out(text) {
+  if (text != null) process.stdout.write(String(text).replace(/\n?$/, '\n'));
+}
+
+const PROPS = `[ro.product.brand]: [OnePlus]
+[ro.product.model]: [PKG110]
+[ro.product.name]: [OP5D1L1]
+[ro.product.device]: [OP5D1L1]
+[ro.product.marketname]: [OnePlus Ace 5]
+[ro.build.version.release]: [15]
+[ro.build.version.sdk]: [35]
+[ro.build.display.id]: [PLK110_11.A.62]
+[ro.build.version.ota]: [PLK110_11.A.62_202504011200]
+[ro.build.version.incremental]: [1743500000]
+[ro.build.version.security_patch]: [2025-03-05]
+[ro.build.version.oplusrom]: [ColorOS 15.0.1]
+[ro.build.region]: [CN]
+[ro.product.locale]: [zh-CN]`;
+
+const PACKAGES = [
+  'com.google.android.googlequicksearchbox',
+  'com.google.android.apps.bard',
+  'com.google.android.gms',
+  'com.google.android.gsf',
+  'com.android.vending',
+  'com.oplus.settings',
+  'com.oplus.appmarket',
+  'com.heytap.market',
+  'com.oplus.breeno',
+  'com.oplus.ocs',
+  'com.android.systemui',
+  'com.oplus.launcher',
+];
+
+const SETTINGS_PACKAGE_DUMP = `Packages:
+  Package [com.oplus.settings] (1a2b3c):
+    userId=1000
+    Activities:
+      com.oplus.settings/.Settings
+      com.oplus.settings/.OplusPowerButtonSettingsActivity
+      com.oplus.settings/.OplusButtonsAndGesturesActivity
+      com.oplus.settings/.OplusConvenienceToolsActivity
+      com.oplus.settings/.OplusAssistantSettingsActivity
+      com.oplus.settings/.OplusGoogleSettingsActivity
+      com.oplus.settings/.OplusGoogleAccountActivity
+      com.oplus.settings/.OplusAccessibilitySettingsActivity
+      com.oplus.settings/.OplusDefaultAppsActivity
+      com.oplus.settings/.OplusBatterySettingsActivity
+`;
+
+function settingsListSecure(state) {
+  return [
+    `assistant=${state.assistant ?? ''}`,
+    `voice_interaction_service=${state.voiceInteractionService ?? ''}`,
+    'voice_recognition_service=com.google.android.googlequicksearchbox/com.google.android.voicesearch.serviceapi.GoogleRecognitionService',
+    'enabled_accessibility_services=',
+    'accessibility_enabled=0',
+    'navigation_mode=2',
+    'user_setup_complete=1',
+  ].join('\n');
+}
+
+function handle(args) {
+  const state = loadState();
+
+  // убираем -s <serial>
+  const argv = [...args];
+  if (argv[0] === '-s') argv.splice(0, 2);
+
+  const cmd = argv[0] || '';
+
+  if (cmd === 'version') {
+    out('Android Debug Bridge version 1.0.41\nVersion 35.0.2-12147458\nInstalled as /usr/local/bin/adb (MOCK)');
+    return 0;
+  }
+
+  if (cmd === 'devices') {
+    if (!state.connected) {
+      out('List of devices attached');
+      return 0;
+    }
+    out(
+      `List of devices attached\n${SERIAL}\tdevice product:OP5D1L1 model:PKG110 device:OP5D1L1 transport_id:1`,
+    );
+    return 0;
+  }
+
+  if (cmd === 'pair') {
+    state.paired = true;
+    saveState(state);
+    out(`Successfully paired to ${argv[1]} [guid=mock-guid-0001]`);
+    return 0;
+  }
+
+  if (cmd === 'connect') {
+    state.connected = true;
+    saveState(state);
+    out(`connected to ${argv[1]}`);
+    return 0;
+  }
+
+  if (cmd === 'tcpip') {
+    out(`restarting in TCP mode port: ${argv[1] || 5555}`);
+    return 0;
+  }
+
+  if (cmd !== 'shell') {
+    out(`MOCK: неизвестная команда adb ${argv.join(' ')}`);
+    return 1;
+  }
+
+  const sh = argv.slice(1).join(' ');
+
+  if (sh === 'getprop' || sh === 'getprop ') {
+    out(PROPS);
+    return 0;
+  }
+
+  let pm = sh.match(/^getprop (\S+)$/);
+  if (pm) {
+    const line = PROPS.split('\n').find((l) => l.startsWith(`[${pm[1]}]:`));
+    out(line ? line.replace(/^\[[^\]]+\]:\s*\[(.*)\]$/, '$1') : '');
+    return 0;
+  }
+
+  if (sh === 'pm list packages') {
+    out(PACKAGES.map((p) => `package:${p}`).join('\n'));
+    return 0;
+  }
+
+  if (sh === 'settings list secure') {
+    out(settingsListSecure(state));
+    return 0;
+  }
+
+  if (sh === 'settings list global' || sh === 'settings list system') {
+    out(`power_button_long_press=${state.powerAction}\nassistant_gesture_enabled=1`);
+    return 0;
+  }
+
+  let m = sh.match(/^settings put secure (\S+) (.*)$/);
+  if (m) {
+    const key = m[1];
+    const value = m[2].replace(/^['"]|['"]$/g, '');
+    if (key === 'assistant') state.assistant = value || null;
+    if (key === 'voice_interaction_service') state.voiceInteractionService = value || null;
+    saveState(state);
+    return 0;
+  }
+
+  m = sh.match(/^settings get secure (\S+)$/);
+  if (m) {
+    const key = m[1];
+    const alias = {
+      assistant: state.assistant,
+      voice_interaction_service: state.voiceInteractionService,
+    };
+    const value = key in alias ? alias[key] : state[key];
+    out(value === null || value === undefined || value === '' ? 'null' : value);
+    return 0;
+  }
+
+  if (/query-services/.test(sh) && /VoiceInteractionService/.test(sh)) {
+    out(
+      [
+        'com.google.android.googlequicksearchbox/com.google.android.voiceinteraction.GsaVoiceInteractionService',
+        'com.google.android.googlequicksearchbox/com.google.android.apps.search.assistant.surfaces.voice.service.AssistantVoiceInteractionService',
+        'com.oplus.breeno/com.oplus.breeno.voice.BreenoVoiceInteractionService',
+      ].join('\n'),
+    );
+    return 0;
+  }
+
+  if (/^dumpsys package com\.oplus\.settings$/.test(sh)) {
+    out(SETTINGS_PACKAGE_DUMP);
+    return 0;
+  }
+
+  if (/^dumpsys package /.test(sh)) {
+    out('Packages:\n  Package [] ():');
+    return 0;
+  }
+
+  if (/^pm grant /.test(sh)) {
+    out('MOCK: разрешение выдано');
+    return 0;
+  }
+
+  if (/^dumpsys deviceidle whitelist/.test(sh)) {
+    out('Added: ' + sh.split(' ').pop());
+    return 0;
+  }
+
+  if (/^am start /.test(sh)) {
+    if (/assistantguidedialog/i.test(sh)) {
+      out('Starting: Intent { act=android.intent.action.MAIN }\nMOCK: диалог выбора помощника открыт');
+      return 0;
+    }
+    if (/VOICE_COMMAND/.test(sh)) {
+      if (!state.assistant && !state.voiceInteractionService) {
+        out('Error: Activity not started, unable to resolve Intent { act=android.intent.action.VOICE_COMMAND }');
+        return 1;
+      }
+      out('Starting: Intent { act=android.intent.action.VOICE_COMMAND }\nMOCK: ассистент запущен');
+      return 0;
+    }
+    out(`Starting: Intent { ${sh.slice('am start '.length)} }`);
+    return 0;
+  }
+
+  out(`MOCK: команда не поддержана: ${sh}`);
+  return 1;
+}
+
+process.exitCode = handle(process.argv.slice(2));

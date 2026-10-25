@@ -1,0 +1,15 @@
+{
+  "name": "gemini-power-button",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Локальный инструмент: назначает Gemini / Google-ассистента на долгое нажатие кнопки питания на OnePlus/OPPO (OxygenOS/ColorOS), включая китайские прошивки без пункта в настройках",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server/server.js",
+    "demo": "ADB_BIN=./tools/mock-adb node server/server.js",
+    "test": "node test/smoke.js"
+  }
+}
