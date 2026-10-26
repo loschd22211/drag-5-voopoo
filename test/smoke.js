@@ -320,7 +320,7 @@ test('одноклик: сам находит помощника, снимает
   assert.ok(src.includes('speech_assist_power_wakeup 0'), 'Breeno должен сниматься с кнопки');
   assert.ok(src.includes('assist_gesture_enabled 1'), 'жест удержания питания надо включать');
   // самопроверка идёт удержанием питания, а не KEYCODE_ASSIST: тот на ColorOS врёт (docs 2.998)
-  assert.ok(src.includes('input keyevent --longpress 26'), 'нужна самопроверка удержанием питания');
+  assert.ok(src.includes('function Test-Assistant'), 'нужна самопроверка');
   assert.ok(!/KEYCODE_ASSIST/.test(src), 'KEYCODE_ASSIST больше не используется');
   assert.ok(src.includes('mCurrentFocus'), 'вердикт должен читаться с экрана');
   // на ColorOS shell не имеет права менять appops — не пытаемся
@@ -339,13 +339,14 @@ test('плеер на локскрине и AOSP-ключи кнопки заш�
   assert.ok(src.includes('key_home_long_press_action 2'), 'AOSP-код 2 = помощник по долгому нажатию Home');
   // проверка кнопки больше не делает один замер через фиксированную паузу
   assert.ok(!/Start-Sleep -Seconds 5/.test(src), 'один замер через 5 секунд врал — нужен опрос');
-  assert.ok(/for \(\$i = 1; \$i -le \$Tries; \$i\+\+\)/.test(src), 'каждый путь проверяется несколько раз');
-  assert.ok(src.includes("input swipe"), 'жест от нижнего угла проверяется реальным свайпом');
+  assert.ok(src.includes('Get-WindowDump'), 'смотрим окна, а не только фокус: оверлей не берёт фокус');
+  assert.ok(src.includes('seenNew'), 'новые окна должны попадать в отчёт');
   assert.ok(src.includes('[switch]$Test'), 'нужен режим -Test: только замер, без изменения настроек');
-  assert.ok(src.includes('Get-AssistantWindows'), 'оверлей-сессия не берёт фокус — надо смотреть список окон');
-  assert.ok(src.includes('Reset-Screen'), 'перед каждой попыткой экран надо будить и сбрасывать');
+  // ColorOS не исполняет инжектированные события: проверка только руками (docs 2.992)
+  assert.ok(!/Sh 'input swipe/.test(src), 'жест больше не эмулируется — ColorOS его игнорирует');
+  assert.ok(!/Sh 'input keyevent --longpress 26'/.test(src), 'удержание питания больше не эмулируется');
   // KEYCODE_ASSIST на ColorOS поднимает окно через раз: эмулируем именно удержание питания
-  assert.ok(src.includes('input keyevent --longpress 26'), 'проверка должна имитировать удержание кнопки питания');
+  assert.ok(src.includes('начинай сразу'), 'скрипт должен предупредить, что нажимать надо прямо сейчас');
   assert.ok(!src.includes("input keyevent KEYCODE_ASSIST' | Out-Null"), 'KEYCODE_ASSIST больше не единственная проверка');
   assert.ok(src.includes('cached_apps_freezer'), 'нужно снимать заморозку фоновых приложений');
 });
