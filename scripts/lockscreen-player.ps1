@@ -1,6 +1,7 @@
 ﻿# Почему плеер не появляется на экране блокировки — и как это включить.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lockscreen-player.ps1
+#   ... -Raw   печатать сырые строки состояния сессий (если состояние не читается)
 #
 # Что делает:
 #   1. находит adb и телефон
@@ -15,7 +16,8 @@
 
 param(
   [string]$Adb = "",
-  [string]$Serial = ""
+  [string]$Serial = "",
+  [switch]$Raw
 )
 
 $ErrorActionPreference = "Continue"
@@ -61,24 +63,37 @@ function Connect-Adb {
   Write-Ok "телефон: $($script:Serial)"
 }
 
-# Медиасессии: package + состояние воспроизведения (3 = играет)
+# Медиасессии: package + состояние воспроизведения (3 = играет).
+# Режем дамп по "MediaSessionRecord{" — иначе package= встречается несколько раз
+# на одну сессию и предыдущий разбор терял состояние (state оставался -1).
 function Get-MediaSessions {
   $raw = Sh 'dumpsys media_session'
-  $sessions = @()
-  $pkg = ''
-  $state = -1
-  foreach ($line in ($raw -split "`n")) {
-    $mPkg = [regex]::Match($line, 'package=([A-Za-z0-9_.]+)')
-    if ($mPkg.Success) {
-      if ($pkg -ne '' -and $state -ge 0) { $sessions += [pscustomobject]@{ Pkg = $pkg; State = $state } }
-      $pkg = $mPkg.Groups[1].Value
-      $state = -1
+  $list = @()
+  foreach ($chunk in [regex]::Split($raw, 'MediaSessionRecord\{')) {
+    $mp = [regex]::Match($chunk, 'package=([A-Za-z0-9_.]+)')
+    if (-not $mp.Success) { continue }
+    $pkgName = $mp.Groups[1].Value
+    $state = -1
+    $stateLine = ''
+    $ms = [regex]::Match($chunk, 'PlaybackState\s*\{\s*state=(\d+)')
+    if ($ms.Success) {
+      $state = [int]$ms.Groups[1].Value
+      $stateLine = ($ms.Value -replace '\s+', ' ')
     }
-    $mSt = [regex]::Match($line, 'state=PlaybackState \{state=(\d+)')
-    if ($mSt.Success) { $state = [int]$mSt.Groups[1].Value }
+    if ($Raw -and $stateLine -eq '') {
+      foreach ($l in ($chunk -split "`n")) {
+        if ($l -match 'state|PlaybackState') { $stateLine = ($l -replace '\s+', ' ').Trim(); break }
+      }
+    }
+    $known = $null
+    foreach ($item in $list) { if ($item.Pkg -eq $pkgName) { $known = $item } }
+    if ($known) {
+      if ($state -gt $known.State) { $known.State = $state }
+    } else {
+      $list += [pscustomobject]@{ Pkg = $pkgName; State = $state; Line = $stateLine }
+    }
   }
-  if ($pkg -ne '') { $sessions += [pscustomobject]@{ Pkg = $pkg; State = $state } }
-  return $sessions
+  return $list
 }
 
 # Уведомление приложения: канал и его важность
@@ -122,15 +137,25 @@ if ($sessions.Count -eq 0) {
   exit 0
 }
 $playing = @()
+$any = @()
 foreach ($s in $sessions) {
-  $label = 'пауза'
-  if ($s.State -eq 3) { $label = 'играет' } elseif ($s.State -eq 2) { $label = 'буферизует' } elseif ($s.State -eq 1) { $label = 'остановлено' }
+  $label = 'состояние неизвестно'
+  if ($s.State -eq 3) { $label = 'играет' }
+  elseif ($s.State -eq 2) { $label = 'буферизует' }
+  elseif ($s.State -eq 1) { $label = 'остановлено' }
+  elseif ($s.State -eq 0) { $label = 'нет состояния' }
   Write-Dim ("{0}: {1} (state={2})" -f $s.Pkg, $label, $s.State)
+  if ($Raw -and $s.Line -ne '') { Write-Dim ("   сырое: " + $s.Line) }
+  $any += $s.Pkg
   if ($s.State -eq 3 -or $s.State -eq 2) { $playing += $s.Pkg }
 }
 
 if ($playing.Count -eq 0) {
-  Write-Warn "сейчас ничего не играет — включи трек и запусти снова"
+  Write-Warn "ни одна сессия не сообщает «играет» — плеер на локскрине обычно требует активного воспроизведения"
+  Write-Dim "включи трек и запусти скрипт снова (музыка должна играть в этот момент)"
+}
+if ($any.Count -eq 0) {
+  Write-Warn "медиасессий нет вообще: приложение не отдаёт плеер системе"
   Write-Host ""
   Read-Host "Enter — закрыть"
   exit 0
@@ -139,7 +164,7 @@ if ($playing.Count -eq 0) {
 Write-Step "Уведомление и важность канала"
 $needFix = @()
 $unknown = @()
-foreach ($pkg in $playing) {
+foreach ($pkg in $any) {
   $info = Get-NotificationInfo -Package $pkg
   if (-not $info) {
     Write-Warn ("{0}: уведомления с плеером нет — приложение не публикует его во время игры" -f $pkg)
