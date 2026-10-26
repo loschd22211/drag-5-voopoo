@@ -159,7 +159,7 @@ test('ранжирование: реальный список с Ace 5 (ColorOS 
 });
 
 test('PowerShell-скрипты сохранены в UTF-8 с BOM (иначе PS 5.1 ломает кириллицу)', () => {
-  const files = ['oneclick.ps1', 'adb-gemini.ps1', 'breeno-off.ps1', 'gemini-trigger.ps1', 'debloat-market.ps1'];
+  const files = ['oneclick.ps1', 'adb-gemini.ps1', 'breeno-off.ps1', 'gemini-trigger.ps1', 'debloat-market.ps1', 'power-key-reset.ps1'];
   for (const name of files) {
     const buf = fs.readFileSync(path.join(__dirname, '..', 'scripts', name));
     assert.ok(
@@ -299,6 +299,17 @@ test('помощник назначается только если Google ре�
   assert.ok(src.includes("pm path com.google.android.apps.bard"), 'нужно проверять и Gemini');
   assert.ok(src.includes("assist_gesture_enabled 1"), 'жест «удержание питания -> помощник» надо включать');
   assert.ok(src.includes("assist_gesture_wake_enabled 1"), 'и его вариант для выключенного экрана');
+});
+
+test('откат кнопки: удаление с лестницей способов и возврат Breeno', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'power-key-reset.ps1'), 'utf8');
+  // pm uninstall на ColorOS отвечает DELETE_FAILED_INTERNAL_ERROR, поэтому нужен перебор
+  assert.ok(src.includes('pm uninstall --user 0'), 'нужен вариант с --user 0');
+  assert.ok(src.includes('cmd package uninstall'), 'нужен вариант через cmd package');
+  assert.ok(src.includes('pm suspend --user 0'), 'последний рубеж — заморозка');
+  assert.ok(src.includes('speech_assist_power_wakeup 1'), 'Breeno должен возвращаться на кнопку');
+  assert.ok(src.includes('assist_gesture_enabled 0'), 'жест помощника надо выключать обратно');
+  assert.ok(src.includes("'assistant.txt'"), 'assistant возвращается из бэкапа');
 });
 
 (async () => {

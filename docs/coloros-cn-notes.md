@@ -301,6 +301,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gemini-trigger.ps1 -
 
 Готовый скрипт: `scripts/debloat-market.ps1` (возврат — `-Restore`).
 
+### Удаление пакета: `DELETE_FAILED_INTERNAL_ERROR`
+
+`adb shell pm uninstall dev.evoker.homeholdcts` на ColorOS 16 отвечает
+`Failure [DELETE_FAILED_INTERNAL_ERROR]` — то же самое, что мы видели на
+`com.coloros.assistantscreen`. Помогает лестница: `pm uninstall --user 0`,
+`pm uninstall -k --user 0`, `cmd package uninstall`, а если не взяло —
+`pm suspend --user 0` (приложение остаётся, но заморожено). Всё это делает
+`scripts/power-key-reset.ps1`, он же возвращает `assistant` из бэкапа и Breeno на кнопку.
+
 ### Грабли, на которые уже наступили
 
 1. **`Kill` — алиас `Stop-Process`.** Функция с таким именем не вызывается:
