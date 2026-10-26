@@ -20,6 +20,7 @@ param(
   [switch]$Raw
 )
 
+$ScriptVersion = '2026-10-27.2'
 $ErrorActionPreference = "Continue"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -59,11 +60,14 @@ function Connect-Adb {
     ForEach-Object { ($_ -split '\s+')[0] }
   if (-not $devices) { Stop-Script "телефон не виден: кабель, «Отладка по USB», подтверждение на экране" }
   $script:Serial = if ($Serial) { $Serial } else { @($devices)[0] }
+  Write-Dim ("версия скрипта: " + $ScriptVersion)
   Write-Ok "adb: $bin"
   Write-Ok "телефон: $($script:Serial)"
 }
 
 # Медиасессии: package + состояние воспроизведения (3 = играет).
+# Если формат дампа другой и состояние не читается — печатаем сырые строки,
+# а не делаем вид, что «ничего не играет».
 # Режем дамп по "MediaSessionRecord{" — иначе package= встречается несколько раз
 # на одну сессию и предыдущий разбор терял состояние (state оставался -1).
 function Get-MediaSessions {
@@ -80,7 +84,7 @@ function Get-MediaSessions {
       $state = [int]$ms.Groups[1].Value
       $stateLine = ($ms.Value -replace '\s+', ' ')
     }
-    if ($Raw -and $stateLine -eq '') {
+    if ($stateLine -eq '') {
       foreach ($l in ($chunk -split "`n")) {
         if ($l -match 'state|PlaybackState') { $stateLine = ($l -replace '\s+', ' ').Trim(); break }
       }
@@ -139,20 +143,20 @@ if ($sessions.Count -eq 0) {
 $playing = @()
 $any = @()
 foreach ($s in $sessions) {
-  $label = 'состояние неизвестно'
+  $label = 'состояние не прочитано'
   if ($s.State -eq 3) { $label = 'играет' }
   elseif ($s.State -eq 2) { $label = 'буферизует' }
   elseif ($s.State -eq 1) { $label = 'остановлено' }
   elseif ($s.State -eq 0) { $label = 'нет состояния' }
   Write-Dim ("{0}: {1} (state={2})" -f $s.Pkg, $label, $s.State)
-  if ($Raw -and $s.Line -ne '') { Write-Dim ("   сырое: " + $s.Line) }
+  if ($s.State -lt 0 -and $s.Line -ne '') { Write-Dim ("   сырое: " + $s.Line) }
   $any += $s.Pkg
   if ($s.State -eq 3 -or $s.State -eq 2) { $playing += $s.Pkg }
 }
 
 if ($playing.Count -eq 0) {
-  Write-Warn "ни одна сессия не сообщает «играет» — плеер на локскрине обычно требует активного воспроизведения"
-  Write-Dim "включи трек и запусти скрипт снова (музыка должна играть в этот момент)"
+  Write-Warn "ни одна сессия не сообщает «играет»"
+  Write-Dim "если музыка на самом деле играет — значит ром не отдаёт состояние; скинь вывод с -Raw"
 }
 if ($any.Count -eq 0) {
   Write-Warn "медиасессий нет вообще: приложение не отдаёт плеер системе"
