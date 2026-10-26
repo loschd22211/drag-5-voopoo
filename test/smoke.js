@@ -440,6 +440,8 @@ test('left-panel: сам листает, читает разметку и не �
   const src = fs.readFileSync(file, 'utf8');
   assert.ok(src.includes('uiautomator dump'), 'снимаем разметку экрана');
   assert.ok(src.includes('input swipe'), 'сам листает на левую страницу');
+  assert.ok(src.includes('wm size'), 'свайп по реальному размеру экрана');
+  assert.ok(src.includes('Test-PanelWindow'), 'и окно ленты проверяется');
   assert.ok(src.includes('[\\u4e00-\\u9fff]'), 'ищет китайские надписи');
   assert.ok(src.includes('$Allowed'), 'есть белый список того, что можно гасить');
   assert.ok(src.includes('[switch]$Restore'), 'нужен откат');
@@ -450,6 +452,21 @@ test('left-panel: сам листает, читает разметку и не �
   assert.ok(!src.includes('Выключить всё из списка'), 'нельзя предлагать выключить всё');
   assert.ok(!/foreach \(\$p in \$cn\)/.test(src), 'нельзя перебирать все китайские пакеты');
   assert.ok(!src.includes('pm uninstall'), 'удалять пакеты нельзя');
+});
+
+test('steps-widget: возвращает счётчик шагов', () => {
+  const file = path.join(__dirname, '..', 'scripts', 'steps-widget.ps1');
+  assert.ok(fs.existsSync(file), 'скрипт должен существовать');
+  const src = fs.readFileSync(file, 'utf8');
+  assert.ok(src.includes('com.heytap.health'), 'включает приложение «Здоровье»');
+  assert.ok(src.includes('pm unsuspend --user 0'), 'снимает suspend');
+  assert.ok(src.includes('dumpsys sensorservice'), 'проверяет датчик шагов');
+  assert.ok(!/pm (disable|uninstall)/.test(src), 'ничего не выключает');
+});
+
+test('debloat-cn: здоровье больше не выключается', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'debloat-cn.ps1'), 'utf8');
+  assert.ok(!src.includes("'com.heytap.health'"), 'счётчик шагов не трогаем');
 });
 
 test('restore-cn: возвращает всё выключенное одной командой', () => {

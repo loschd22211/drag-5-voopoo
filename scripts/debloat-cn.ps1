@@ -83,7 +83,6 @@ $Targets = @(
   'com.heytap.speechassist',
   'com.coloros.familyguard',
   'com.oplus.aimemory',
-  'com.heytap.health',
   'com.coloros.weather2'
 )
 
