@@ -6,7 +6,8 @@
 # Что делает по шагам:
 #   1. находит adb (или скачивает platform-tools)
 #   2. находит телефон, делает бэкап текущих настроек в .\colorgoogle-backup
-#   3. скачивает APK ColorGoogle нужной версии и сверяет SHA-256
+#   3. скачивает APK ColorGoogle по прямой ссылке (GitHub API только как резерв)
+#      и сверяет SHA-256, если доступен SHA256SUMS
 #   4. ставит APK с -r -g (сразу с разрешениями)
 #   5. выдаёт READ_LOGS, назначает Google помощником, включает оверлей и уведомления
 #   6. просит один раз доделать три тумблера в приложении (это только руками)
@@ -98,42 +99,72 @@ function Resolve-Device {
 
 function Get-Apk {
   if ($ApkPath) {
-    if (-not (Test-Path $ApkPath)) { Die "APK не найден: $ApkPath" }
+    if (-not (Test-Path $ApkPath -PathType Leaf)) { Die "APK не найден: $ApkPath" }
     Ok "использую готовый APK: $ApkPath"
-    return $ApkPath
+    return (Resolve-Path $ApkPath).Path
   }
 
-  $target = Join-Path $WorkDir $ApkName
-  if (Test-Path $target) {
+  # отдельная папка: никогда не работаем с путём, если имя файла не определилось
+  $apkDir = Join-Path $WorkDir 'apk'
+  New-Item -ItemType Directory -Force -Path $apkDir | Out-Null
+  $target = Join-Path $apkDir $ApkName
+
+  if ((Test-Path $target -PathType Leaf) -and ((Get-Item $target).Length -gt 10000000)) {
     Ok "APK уже скачан: $target"
     return $target
   }
 
-  Step "Скачиваю $ApkName из релиза $Version"
+  # 1) прямая ссылка на файл в релизе — не требует GitHub API и не упирается в лимиты
+  $directUrl = "https://github.com/joeyandu/ColorGoogle/releases/download/$Version/$ApkName"
+  # 2) API — только как резерв, у него лимит 60 запросов в час на IP
+  $urls = @($directUrl)
   try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $release = Invoke-RestMethod $RepoApi -UseBasicParsing -Headers @{ 'User-Agent' = 'gemini-power-button' }
+    foreach ($asset in $release.assets) {
+      if ($asset.name -eq $ApkName -and $asset.browser_download_url) { $urls += $asset.browser_download_url }
+      if ($asset.name -eq 'SHA256SUMS') { $script:SumsUrl = $asset.browser_download_url }
+    }
+    if (-not $script:SumsUrl) {
+      $script:SumsUrl = "https://github.com/joeyandu/ColorGoogle/releases/download/$Version/SHA256SUMS"
+    }
   } catch {
-    Die "не удалось получить данные релиза: $($_.Exception.Message)"
+    Warn "GitHub API недоступен ($($_.Exception.Message)) — качаю по прямой ссылке"
+    $script:SumsUrl = "https://github.com/joeyandu/ColorGoogle/releases/download/$Version/SHA256SUMS"
   }
-  $asset = $release.assets | Where-Object { $_.name -eq $ApkName } | Select-Object -First 1
-  if (-not $asset) {
-    $names = ($release.assets | ForEach-Object { $_.name }) -join ', '
-    Die "в релизе $Version нет $ApkName. Доступно: $names"
+
+  Step "Скачиваю $ApkName"
+  $downloaded = $false
+  foreach ($url in $urls) {
+    try {
+      Invoke-WebRequest $url -OutFile $target -UseBasicParsing
+      if ((Test-Path $target -PathType Leaf) -and ((Get-Item $target).Length -gt 10000000)) { $downloaded = $true; break }
+      Warn "файл подозрительно маленький, пробую другой адрес"
+    } catch {
+      Warn "не вышло: $($_.Exception.Message)"
+    }
   }
-  New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
-  try {
-    Invoke-WebRequest $asset.browser_download_url -OutFile $target -UseBasicParsing
-  } catch {
-    Die "скачивание не удалось: $($_.Exception.Message)"
+  if (-not $downloaded) {
+    # последний шанс — curl.exe, он есть в Windows 10/11
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+      Step "Пробую curl.exe"
+      & curl.exe -L --retry 2 --max-time 300 -o $target $directUrl | Out-Null
+      if ((Test-Path $target -PathType Leaf) -and ((Get-Item $target).Length -gt 10000000)) { $downloaded = $true }
+    }
+  }
+  if (-not $downloaded) {
+    Err "APK не скачался."
+    Dim "Скачай вручную в браузере:"
+    Dim $directUrl
+    Dim "и запусти:  -ApkPath `"$env:USERPROFILE\Downloads\$ApkName`""
+    Die "без файла дальше нельзя"
   }
   Ok ("скачано: {0:N1} МБ" -f ((Get-Item $target).Length / 1048576))
 
-  # проверка контрольной суммы, если в релизе есть SHA256SUMS
-  $sums = $release.assets | Where-Object { $_.name -eq 'SHA256SUMS' } | Select-Object -First 1
-  if ($sums) {
+  # проверка контрольной суммы, если доступен SHA256SUMS
+  if ($script:SumsUrl) {
     try {
-      $text = (Invoke-WebRequest $sums.browser_download_url -UseBasicParsing).Content
+      $text = (Invoke-WebRequest $script:SumsUrl -UseBasicParsing).Content
       $line = ($text -split "`r?`n" | Where-Object { $_ -match [regex]::Escape($ApkName) } | Select-Object -First 1)
       if ($line) {
         $expected = ($line -split '\s+')[0].ToLower()

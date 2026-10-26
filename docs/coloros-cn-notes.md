@@ -286,6 +286,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gemini-trigger.ps1 -
 
 ---
 
+## 2.95. «Скачивается, но не ставится»: магазин HeyTap и сканер APK
+
+Симптомы: установка висит на «Проверка приложения», потом отказ; либо
+`INSTALL_FAILED_VERIFICATION_FAILURE`; либо вообще ничего не происходит.
+
+Виноваты три вещи, все снимаются без root:
+
+| Что | Как проявляется | Команда |
+| --- | --- | --- |
+| `com.heytap.market` (App Market) | режет сторонние APK, подсовывает каталог | `pm disable-user --user 0` → при отказе `pm suspend` |
+| `com.oplus.appdetail` (сканер установок) | «думает» минутами и блокирует | то же |
+| `verifier_verify_adb_installs` / `package_verifier_enable` | `INSTALL_FAILED_VERIFICATION_FAILURE` | `settings put global ... 0` |
+
+Готовый скрипт: `scripts/debloat-market.ps1` (возврат — `-Restore`).
+
+### Грабли, на которые уже наступили
+
+1. **`Kill` — алиас `Stop-Process`.** Функция с таким именем не вызывается:
+   PowerShell падает с `ParameterBindingException: не удается преобразовать "com.heytap.market"`.
+   В скриптах репозитория функции называются `Block-App` / `Unblock-App`.
+2. **GitHub API отдаёт `403 rate limit exceeded`** (60 запросов в час на IP без авторизации).
+   Поэтому установщик качает APK **по прямой ссылке**
+   `https://github.com/joeyandu/ColorGoogle/releases/download/<tag>/<file>.apk`,
+   а API использует только как резерв.
+3. **`$apk = Join-Path $env:TEMP $asset.name` при пустом `$asset`** даёт путь к папке
+   `C:\Users\<user>\AppData\Local\Temp\` — и следующий `Remove-Item` пытается снести
+   **весь Temp**. В скрипте теперь отдельная папка `...\gemini-power-button\apk`,
+   проверка `-PathType Leaf` и обязательная проверка размера файла.
+4. **Суффиксы `10MB` / `1MB`** ломают часть парсеров и старый PowerShell — используем числа.
+
+---
+
 ## 3. Что не заведётся даже при рабочей кнопке
 
 - **«Окей, Google» / Voice Match.** На CN-сборках часто отсутствует системная библиотека,

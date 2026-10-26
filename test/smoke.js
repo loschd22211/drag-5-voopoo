@@ -159,7 +159,7 @@ test('ранжирование: реальный список с Ace 5 (ColorOS 
 });
 
 test('PowerShell-скрипты сохранены в UTF-8 с BOM (иначе PS 5.1 ломает кириллицу)', () => {
-  const files = ['oneclick.ps1', 'adb-gemini.ps1', 'breeno-off.ps1', 'gemini-trigger.ps1'];
+  const files = ['oneclick.ps1', 'adb-gemini.ps1', 'breeno-off.ps1', 'gemini-trigger.ps1', 'debloat-market.ps1'];
   for (const name of files) {
     const buf = fs.readFileSync(path.join(__dirname, '..', 'scripts', name));
     assert.ok(
@@ -251,6 +251,32 @@ test('установщик ColorGoogle: нужные шаги на месте', 
     assert.ok(src.includes(marker), `в установщике нет «${marker}»`);
   }
   assert.ok(!/1MB/.test(src), 'суффикс 1MB ломает парсеры — используем 1048576');
+});
+
+test('установщик не зависит от GitHub API и не может удалить папку', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'gemini-trigger.ps1'), 'utf8');
+  // прямая ссылка должна быть первой: API отдаёт 403 при лимите 60 запросов в час
+  assert.ok(src.includes('$directUrl = "https://github.com/joeyandu/ColorGoogle/releases/download/'),
+    'нет прямой ссылки на релиз — при лимите GitHub API установка падает');
+  assert.ok(src.indexOf('$urls = @($directUrl)') < src.indexOf('Invoke-RestMethod'),
+    'прямая ссылка должна пробоваться до обращения к API');
+  // путь к APK строится только в отдельной папке apk и только из готового имени
+  assert.ok(src.includes("Join-Path $WorkDir 'apk'"), 'APK должен лежать в отдельной папке');
+  assert.ok(!/Remove-Item \$apk\b/.test(src), 'нельзя удалять путь, который может оказаться папкой Temp');
+  assert.ok(!/10MB/.test(src), 'суффикс 10MB ломает парсеры — используем число');
+  assert.ok(!/\?\?/.test(src), '?? требует PowerShell 7, у пользователя 5.1');
+  assert.ok(src.includes('-PathType Leaf'), 'перед работой с файлом нужна проверка, что это файл');
+});
+
+test('скрипт деблоата: имена функций не конфликтуют с алиасами PowerShell', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'debloat-market.ps1'), 'utf8');
+  // Kill — алиас Stop-Process: из-за него блок падал с ParameterBindingException
+  assert.ok(!/^\s*function\s+Kill\b/m.test(src), 'нельзя объявлять функцию Kill (алиас Stop-Process)');
+  for (const marker of ['com.heytap.market', 'com.oplus.appdetail', 'verifier_verify_adb_installs', 'package_verifier_enable']) {
+    assert.ok(src.includes(marker), `в скрипте нет «${marker}»`);
+  }
+  assert.ok(src.includes('pm suspend'), 'нужна лестница стратегий: disable-user -> suspend -> uninstall');
+  assert.ok(src.includes('-Restore'), 'должен быть режим возврата');
 });
 
 (async () => {
