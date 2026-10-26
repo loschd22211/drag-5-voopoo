@@ -153,36 +153,62 @@ function Set-LockScreenPlayer {
   Say-Dim "если карточки всё равно нет — у плеера низкий приоритет уведомлений: Настройки -> Уведомления -> приложение -> включить"
 }
 
+function Set-BackgroundStart {
+  # ColorOS замораживает фоновые приложения, и холодный старт Google занимал
+  # около минуты: окно помощника появлялось с огромной задержкой.
+  $fz = Sh 'settings get global cached_apps_freezer'
+  if ($fz -match 'disabled') {
+    Say-Ok "заморозка фоновых приложений уже выключена"
+    return
+  }
+  Sh 'settings put global cached_apps_freezer disabled' | Out-Null
+  $after = Sh 'settings get global cached_apps_freezer'
+  if ($after -match 'disabled') {
+    Say-Ok "заморозка фоновых приложений выключена (было: $fz) — помощник должен открываться быстрее"
+    Say-Dim "полный эффект после перезагрузки телефона"
+  } else {
+    Say-Dim "заморозку снять не удалось (=$after) — тогда руками: Настройки -> Приложения -> Google -> Батарея -> без ограничений"
+  }
+}
+
 function Test-PowerButton {
-  Say-Step "Проверка: «нажимаю» кнопку питания программно"
-  # Один замер через фиксированную паузу врал: окно помощника могло ещё не подняться
-  # или уже закрыться. Опрашиваем несколько секунд и берём первый же не-лончер.
-  Sh 'input keyevent KEYCODE_ASSIST' | Out-Null
+  Say-Step "Проверка кнопки: эмулирую долгое нажатие питания"
+  # KEYCODE_ASSIST (219) на ColorOS поднимает окно через раз, а один замер через
+  # фиксированную паузу врал. Удержание питания эмулируется как настоящее:
+  # input keyevent --longpress 26 идёт тем же путём в PhoneWindowManager,
+  # что и физическое нажатие, и будит экран.
+  Sh 'logcat -c' | Out-Null
+  Sh 'input keyevent --longpress 26' | Out-Null
+
   $focus = ''
   $seen = @()
-  for ($i = 0; $i -lt 6; $i++) {
-    Start-Sleep -Milliseconds 800
+  $secs = 0
+  for ($i = 0; $i -lt 40; $i++) {
+    Start-Sleep -Milliseconds 500
     $win = Sh 'dumpsys window'
     $m = [regex]::Match($win, 'mCurrentFocus=Window\{[^}]*\}')
     if (-not $m.Success) { continue }
     $line = $m.Value -replace '\s+', ' '
     if ($seen -notcontains $line) { $seen += $line }
-    if ($line -match 'googlequicksearchbox|apps\.bard') { $focus = $line; break }
-    if ($line -notmatch 'launcher' -and $line -notmatch 'systemui') { $focus = $line; break }
-    $focus = $line
+    if ($line -match 'googlequicksearchbox|apps\.bard') { $focus = $line; $secs = ($i + 1) * 0.5; break }
+    if ($line -match 'globalactions') { $focus = $line; $secs = ($i + 1) * 0.5; break }
   }
-  if (-not $focus) { Say-No "не смог прочитать, что на экране — посмотри глазами: открылся Gemini?"; return }
+
   if ($seen.Count -gt 1) { Say-Dim ("за время проверки в фокусе были: " + ($seen -join ' | ')) }
 
-  Say-Dim $focus
   if ($focus -match 'googlequicksearchbox|apps\.bard') {
-    Say-Ok "РАБОТАЕТ: помощник открылся"
+    Say-Ok ("РАБОТАЕТ: помощник открылся через " + $secs + " с")
+    if ($secs -gt 5) {
+      Say-Dim "медленно: похоже на заморозку фоновых приложений или на холодный старт через VPN"
+    }
     Say-Dim "Теперь зажми кнопку питания на телефоне на 2 секунды — должен открыться Gemini."
-  } elseif ($focus -match 'systemui|globalactions') {
+  } elseif ($focus -match 'globalactions') {
     Say-No "открылось меню выключения — прошивка не отдаёт кнопку помощнику"
-    Say-Dim "Используй удержание нижней полосы жестов: assist_long_press_home_enabled=1 уже стоит."
+    Say-Dim "Держи нижнюю полосу жестов: assist_long_press_home_enabled=1 и key_home_long_press_action=2 уже стоят."
   } else {
-    Say-No "открылось другое приложение — смотри строку выше"
+    Say-No "за 20 секунд окно помощника не появилось"
+    Say-Dim "Это не приговор кнопке: проверь руками — зажми питание на 2 с и полосу жестов."
+    Say-Dim "Если руками открывается, а программно нет — на этой прошивке система не пускает запуск из shell."
   }
 }
 
@@ -196,6 +222,7 @@ function Undo-All {
   Sh 'settings delete global always_on_vpn_app' | Out-Null
   Sh 'settings put global power_button_long_press 1' | Out-Null
   Sh 'settings put secure key_home_long_press_action 0' | Out-Null
+  Sh 'settings delete global cached_apps_freezer' | Out-Null
   Say-Ok "Breeno вернулся на кнопку, жест выключен, постоянный VPN снят"
 }
 
@@ -235,6 +262,7 @@ Set-PowerButtonToGoogle
 Set-VpnAlwaysOn
 Set-AppRetention
 Set-LockScreenPlayer
+Set-BackgroundStart
 
 Test-PowerButton
 
