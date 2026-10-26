@@ -435,6 +435,17 @@ Gemini из Play Маркета → в приложении Google выбрат�
 
 ---
 
+### Левая панель ColorOS возвращается вместе с Breeno
+
+`Enable-Breeno` в `scripts/breeno-gesture.ps1` возвращает не только голосовой пакет,
+но и левый экран (`key_com_coloros_assistantscreen=1`,
+`remote_view_entry_com.coloros.assistantscreen=1`) — иначе жест не срабатывает. Из-за
+этого после опытов у пользователя снова появлялась китайская панель слева.
+
+Теперь в конце прогона вызывается `Remove-LeftPanel` (suspend assistantscreen +
+ключи в 0 + `assistant_screen_type=0` и дубликат с опечаткой `asistant_screen_type`), а
+убрать панель отдельно можно ключом `-Panel`.
+
 ## 2.988. Долгое нажатие полосы жестов: «быстрый поиск Breeno»
 
 На PKG110 / ColorOS 16.1 длинное нажатие на полосу жестов открывает **быстрый поиск

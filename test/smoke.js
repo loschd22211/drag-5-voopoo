@@ -427,6 +427,9 @@ test('breeno-gesture: пробует роль ASSISTANT и умеет верну
   assert.ok(src.includes('pm disable-user --user 0') || src.includes('pm disable-user --user 0 ', ), 'пакет гасится');
   assert.ok(src.includes('pm uninstall --user 0'), 'и снимается для пользователя как последний шаг');
   assert.ok(src.includes('Test-PressForAssistant'), 'каждый шаг проверяется нажатием');
+  // левая панель включается теми же ключами, что возвращают Breeno
+  assert.ok(src.includes('Remove-LeftPanel'), 'панель должна сниматься после прогона');
+  assert.ok(src.includes('[switch]$Panel'), 'нужен отдельный режим -Panel');
   assert.ok(src.includes('$ScriptVersion'), 'версия печатается');
 });
 
