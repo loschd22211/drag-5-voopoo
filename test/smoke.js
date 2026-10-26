@@ -382,8 +382,12 @@ test('lockscreen-player: включает карточку плеера и об�
   assert.ok(src.includes('dumpsys notification --noredact'), 'и важность канала уведомления');
   assert.ok(src.includes('важность'), 'вердикт должен объяснять про важность канала');
   // разбор медиасессий режем по MediaSessionRecord: package= встречается несколько раз
-  assert.ok(src.includes("MediaSessionRecord"), 'сессии надо резать по MediaSessionRecord');
+  // состояние относится к последней увиденной package= — в дампе их несколько подряд
+  assert.ok(src.includes('$current'), 'состояние должно привязываться к текущей сессии');
   assert.ok(src.includes('PlaybackState'), 'состояние воспроизведения должно читаться');
+  // Android 16 печатает "state=PLAYING(3)" — одним числом это не ловится
+  assert.ok(src.includes('state=(?:[A-Z_]+'), 'нужно читать состояние вида PLAYING(3)');
+  assert.ok(src.includes("com.android.*"), 'служебные com.android.* не должны попадать в отчёт');
   assert.ok(src.includes('[switch]$Raw'), 'нужен -Raw для отладки состояния');
   // версия печатается, иначе невозможно отличить старую копию из кэша raw.githubusercontent
   assert.ok(src.includes('$ScriptVersion'), 'у скрипта должна быть версия');
