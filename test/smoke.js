@@ -282,8 +282,11 @@ test('скрипт деблоата: имена функций не конфли
 test('READ_LOGS выдаётся app-op, а не только pm grant', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'gemini-trigger.ps1'), 'utf8');
   // pm grant READ_LOGS на Android 13+ падает: SecurityException GRANT_RUNTIME_PERMISSIONS
-  assert.ok(src.includes("appops set $Pkg READ_LOGS allow"), 'нужен app-op READ_LOGS как основной путь');
-  assert.ok(src.includes('appops get $Pkg READ_LOGS'), 'результат надо проверять, а не считать успехом');
+  // appops в Android 13+ принимает только строку операции; на имя READ_LOGS отвечает
+  // «Error: Unknown operation string» — на этом уже спотыкались
+  assert.ok(src.includes("'android:read_logs'"), 'нужна строка операции android:read_logs');
+  assert.ok(src.includes('appops set $Pkg $op allow'), 'нужен app-op как основной путь выдачи');
+  assert.ok(!/appops set \$Pkg READ_LOGS allow/.test(src), 'имя READ_LOGS в appops не работает');
   assert.ok(src.includes('[switch]$Status'), 'нужен режим -Status для диагностики без изменений');
 });
 
