@@ -434,21 +434,31 @@ test('breeno-gesture: пробует роль ASSISTANT и умеет верну
   assert.ok(src.includes('$ScriptVersion'), 'версия печатается');
 });
 
-test('left-panel: находит страницу по дампу и не трогает систему', () => {
+test('left-panel: гасит только найденную страницу, а не всё подряд', () => {
   const file = path.join(__dirname, '..', 'scripts', 'left-panel.ps1');
   assert.ok(fs.existsSync(file), 'скрипт должен существовать');
   const src = fs.readFileSync(file, 'utf8');
-  // страницу определяем по фактам с устройства, а не угадываем имя пакета
-  assert.ok(src.includes('dumpsys window'), 'смотрим окна');
+  // страницу определяем по разметке экрана, а не по угадыванию имени
+  assert.ok(src.includes('uiautomator dump'), 'снимаем разметку экрана');
   assert.ok(src.includes('dumpsys SurfaceFlinger --list'), 'и слои экрана');
-  assert.ok(src.includes('logcat -d'), 'и журнал запуска');
-  assert.ok(src.includes('Read-Host'), 'просит открыть страницу и подтвердить');
+  assert.ok(src.includes('$Allowed'), 'есть белый список того, что можно гасить');
   assert.ok(src.includes('[switch]$Restore'), 'нужен откат');
   assert.ok(src.includes('[switch]$Find'), 'нужен режим только посмотреть');
-  assert.ok(src.includes('pm suspend --user 0'), 'если disable-user не сработал — suspend');
+  // именно это выключило 154 пакета и снесло обои — такого быть не должно
+  assert.ok(!src.includes('Выключить всё из списка'), 'нельзя предлагать выключить всё');
+  assert.ok(!/foreach \(\$p in \$cn\)/.test(src), 'нельзя перебирать все китайские пакеты');
   assert.ok(!src.includes('pm uninstall'), 'удалять пакеты нельзя');
-  assert.ok(src.includes('com.oplus.games'), 'гейм-бар в списке неприкосновенных');
   assert.ok(src.includes('key_com_coloros_assistantscreen'), 'ключи левой страницы тоже снимаются');
+});
+
+test('restore-cn: возвращает всё выключенное одной командой', () => {
+  const file = path.join(__dirname, '..', 'scripts', 'restore-cn.ps1');
+  assert.ok(fs.existsSync(file), 'скрипт должен существовать');
+  const src = fs.readFileSync(file, 'utf8');
+  assert.ok(src.includes('pm unsuspend --user 0'), 'снимаем suspend');
+  assert.ok(src.includes('pm enable --user 0'), 'и включаем');
+  assert.ok(!/pm (disable|suspend|uninstall)/.test(src), 'restore ничего не выключает и не удаляет');
+  assert.ok(src.includes('^com\\.(heytap|coloros|oplus|oppo|nearme|oneplus)'), 'берёт китайские префиксы');
 });
 
 test('assistant-keys: показывает, что про помощника реально есть в прошивке', () => {

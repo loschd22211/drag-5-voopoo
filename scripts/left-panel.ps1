@@ -1,12 +1,13 @@
-﻿# Убирает левую страницу рабочего стола ColorOS (китайские рекомендации) и лишнее китайское.
+﻿# Убирает левую страницу рабочего стола ColorOS (китайские рекомендации).
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\left-panel.ps1
-#   ... -Find      только посмотреть, что за страница, ничего не менять
-#   ... -Restore   включить выключенное обратно
+#   ... -Find      только посмотреть, кто рисует страницу
+#   ... -Restore   вернуть выключенное этим скриптом
 #
-# Скрипт не угадывает пакет: он просит открыть страницу, снимает дамп окон,
-# активностей, слоёв SurfaceFlinger и журнала — и по ним определяет, кто её рисует.
-# Ничего не удаляет: pm disable-user / pm suspend. Game Center и гейм-бар не трогаем.
+# Важно: скрипт НЕ выключает «всё китайское списком». Он трогает только тот
+# пакет, который реально рисует левую страницу, и только если это контент
+# (помощник, новости, лента, поиск). Обои, будильник, файлы, звук, батарея
+# и остальная система не трогаются никогда.
 #
 # Файл в UTF-8 с BOM (см. docs/windows-encoding.md).
 
@@ -18,7 +19,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$ScriptVersion = "2026-10-27.1"
+$ScriptVersion = "2026-10-27.2"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
   chcp 65001 > $null
@@ -63,18 +64,7 @@ function Connect-Adb {
 
 function Get-Lines($text, [string]$pattern, [int]$max) {
   if ($null -eq $text) { return @() }
-  $out = @(($text -split "`r?`n") | Where-Object { $_ -match $pattern } | Select-Object -First $max)
-  return $out
-}
-
-function Get-Packages($filter) {
-  $raw = Sh ("pm list packages --user 0" + $filter)
-  $names = @()
-  foreach ($line in ($raw -split "`r?`n")) {
-    $m = [regex]::Match($line, '^package:(.+)$')
-    if ($m.Success) { $names += $m.Groups[1].Value.Trim() }
-  }
-  return $names
+  return @(($text -split "`r?`n") | Where-Object { $_ -match $pattern } | Select-Object -First $max)
 }
 
 function Get-State($pkg) {
@@ -87,7 +77,6 @@ function Get-State($pkg) {
   return 'нет'
 }
 
-# ColorOS на части пакетов отвечает "new state: default" и disable-user не срабатывает.
 function Disable-Package($pkg) {
   Sh ("pm disable-user --user 0 " + $pkg) | Out-Null
   if ((Get-State $pkg) -eq 'отключён') { return 'отключён' }
@@ -96,42 +85,27 @@ function Disable-Package($pkg) {
   return ''
 }
 
-# Пакеты, которые пробуем первыми, если дамп ничего внятного не дал.
-$Suspects = @(
+# Что разрешено гасить: только контентные приложения. Всё остальное — никогда.
+$Allowed = @(
   'com.coloros.assistantscreen',
   'com.heytap.assistantscreen',
   'com.oplus.assistantscreen',
   'com.coloros.assistant',
-  'com.coloros.smartassistant',
-  'com.oplus.smartassistant',
   'com.heytap.news',
   'com.oppo.news',
   'com.coloros.news',
   'com.heytap.browser',
-  'com.coloros.pictorial',
-  'com.oplus.aimemory',
-  'com.heytap.recommend',
-  'com.coloros.recommend'
+  'com.heytap.quicksearchbox',
+  'com.oppo.quicksearchbox',
+  'com.oplus.contentportal',
+  'com.heytap.pictorial'
 )
 
-# Что нельзя гасить ни при каких условиях.
 $Keep = @(
-  'com.android.systemui',
   'com.android.launcher',
   'com.oppo.launcher',
-  'com.android.settings',
-  'com.oplus.settings',
-  'com.coloros.settings',
-  'com.android.phone',
-  'com.android.providers.telephony',
-  'com.android.incallui',
-  'com.oplus.camera',
-  'com.coloros.gallery3d',
-  'com.coloros.securitypermission',
-  'com.oplus.games',
-  'com.oplus.gamemode',
-  'com.coloros.gamespaceui',
-  'com.heytap.mcs'
+  'com.android.systemui',
+  'com.android.settings'
 )
 
 $LeftPanelKeys = @(
@@ -141,14 +115,32 @@ $LeftPanelKeys = @(
   'asistant_screen_type'
 )
 
-function Get-KeyValues {
-  $rows = @()
-  foreach ($k in $LeftPanelKeys) {
-    $v = Sh ("settings get secure " + $k)
-    if ($v -eq 'null') { $v = '—' }
-    $rows += [pscustomobject]@{ Key = $k; Value = $v }
+# Слепок экрана: кто реально нарисовал то, что видно.
+function Get-ScreenDump {
+  Sh 'uiautomator dump /sdcard/leftpanel.xml' | Out-Null
+  $xml = Sh 'cat /sdcard/leftpanel.xml'
+  if ($xml -notmatch '<hierarchy') { return $null }
+  return $xml
+}
+
+# Пакеты внутри разметки, по частоте: самый частый — тот, кто рисует страницу.
+function Get-DumpPackages($xml) {
+  $counts = @{}
+  foreach ($m in [regex]::Matches($xml, 'package="([^"]+)"')) {
+    $n = $m.Groups[1].Value
+    if ($counts.ContainsKey($n)) { $counts[$n] = $counts[$n] + 1 } else { $counts[$n] = 1 }
   }
-  return $rows
+  return $counts
+}
+
+function Get-DumpTexts($xml, [int]$max) {
+  $out = @()
+  foreach ($m in [regex]::Matches($xml, 'text="([^"]+)"')) {
+    $t = $m.Groups[1].Value
+    if ($t.Trim() -ne '' -and $out -notcontains $t) { $out += $t }
+    if ($out.Count -ge $max) { break }
+  }
+  return $out
 }
 
 function Set-LeftPanelOff {
@@ -164,81 +156,88 @@ $rom = Sh 'getprop ro.build.version.oplusrom'
 Write-Dim ("версия скрипта: " + $ScriptVersion)
 Write-Dim ("{0}, прошивка {1}" -f $model, $rom)
 
-$pkgAll = Get-Packages ''
-$installed = @{}
-foreach ($p in $pkgAll) { $installed[$p] = $true }
-
 if ($Restore) {
-  # Ничего не запоминаем в файлах: возвращаем всё китайское, что сейчас выключено.
-  Write-Step "Возвращаю китайские приложения"
+  Write-Step "Возвращаю выключенное этим скриптом"
   $n = 0
-  foreach ($p in $pkgAll) {
-    if ($Keep -contains $p) { continue }
-    if ($Suspects -notcontains $p -and $p -notmatch '^com\.(heytap|coloros|oplus|oppo|nearme|oneplus)\.') { continue }
-    if ((Get-State $p) -eq 'включён') { continue }
+  foreach ($p in $Allowed) {
+    $st = Get-State $p
+    if ($st -eq 'нет' -or $st -eq 'включён') { continue }
     Sh ("pm unsuspend --user 0 " + $p) | Out-Null
     Sh ("pm enable --user 0 " + $p) | Out-Null
-    if ((Get-State $p) -eq 'включён') { $n++; Write-Dim ("включён: " + $p) }
+    if ((Get-State $p) -eq 'включён') { Write-Dim ("включён: " + $p); $n++ }
   }
   Write-Ok ("включено обратно: " + $n)
-  Write-Dim "ключи левой страницы оставил в 0 — включать её тебе не надо"
+  Write-Dim "если нужно вернуть вообще всё китайское — scripts\restore-cn.ps1"
   Write-Host ""
   Read-Host "Enter — закрыть"
   exit 0
 }
 
 Write-Step "Что сейчас"
-foreach ($row in (Get-KeyValues)) { Write-Dim ($row.Key + " = " + $row.Value) }
-$present = @()
-foreach ($p in $Suspects) { if ($installed.ContainsKey($p)) { $present += $p } }
-if ($present.Count -gt 0) { Write-Dim ("похожие пакеты: " + ($present -join ', ')) }
-else { Write-Dim "похожих пакетов в системе нет" }
+foreach ($k in $LeftPanelKeys) {
+  $v = Sh ("settings get secure " + $k)
+  if ($v -eq 'null') { $v = '—' }
+  Write-Dim ($k + " = " + $v)
+}
 
 Write-Step "Покажи страницу"
-Write-Dim "свайпни рабочий стол вправо до упора — до той самой страницы с китайскими советами"
-Write-Dim "страницу не закрывай, пока скрипт не закончит"
+Write-Dim "свайпни рабочий стол вправо до упора — до страницы с китайскими советами"
+Write-Dim "оставь её на экране и вернись в PowerShell"
 Sh 'logcat -c' | Out-Null
 Read-Host "Enter — когда она на экране"
 
 Write-Step "Смотрю, кто её рисует"
-$winLines = Get-Lines (Sh 'dumpsys window windows') 'Window #|mCurrentFocus|mFocusedApp' 14
-$actLines = Get-Lines (Sh 'dumpsys activity activities') 'ActivityRecord\{|topResumedActivity|mResumedActivity' 10
-$sfLines  = Get-Lines (Sh 'dumpsys SurfaceFlinger --list') 'launcher|assist|news|feed|recommend|heytap|coloros|oplus' 14
-$logLines = Get-Lines (Sh 'logcat -d -v brief') 'START u0' 12
-
-Write-Dim "окна:"
-foreach ($l in $winLines) { Write-Host ("     " + $l.Trim()) -ForegroundColor DarkGray }
-Write-Dim "активности:"
-foreach ($l in $actLines) { Write-Host ("     " + $l.Trim()) -ForegroundColor DarkGray }
-Write-Dim "слои экрана:"
+$sfLines = Get-Lines (Sh 'dumpsys SurfaceFlinger --list') 'launcher|assist|news|feed|recommend|heytap|coloros|oplus|pictorial' 12
 foreach ($l in $sfLines) { Write-Host ("     " + $l.Trim()) -ForegroundColor DarkGray }
-Write-Dim "журнал запуска:"
-foreach ($l in $logLines) { Write-Host ("     " + $l.Trim()) -ForegroundColor DarkGray }
 
-$evidence = (($winLines + $actLines + $sfLines + $logLines) -join "`n")
-$found = @()
-foreach ($m in [regex]::Matches($evidence, 'com\.[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+')) {
-  $name = $m.Value
-  if ($Keep -contains $name) { continue }
-  if (-not $installed.ContainsKey($name)) { continue }
-  if ($found -notcontains $name) { $found += $name }
+$xml = Get-ScreenDump
+if ($null -eq $xml) {
+  Write-Warn "разметку экрана снять не удалось (uiautomator не ответил)"
+} else {
+  $texts = Get-DumpTexts $xml 8
+  if ($texts.Count -gt 0) {
+    Write-Dim "что написано на странице:"
+    foreach ($t in $texts) { Write-Host ("     " + $t) -ForegroundColor DarkGray }
+  }
+  $counts = Get-DumpPackages $xml
+  Write-Dim "кто нарисовал:"
+  $sorted = $counts.GetEnumerator() | Sort-Object -Property Value -Descending
+  foreach ($e in ($sorted | Select-Object -First 6)) {
+    Write-Host ("     {0}  ({1} элементов)" -f $e.Key, $e.Value) -ForegroundColor DarkGray
+  }
 }
-# Оставляем только подозрительных: помощник, новости, лента и родные оболочки.
+
+# Кто из разрешённых реально присутствует на странице.
 $hits = @()
-foreach ($p in $found) {
-  if ($p -match '(assist|news|feed|recommend|breeno|smart|pictorial)') { $hits += $p }
+if ($null -ne $xml) {
+  foreach ($p in $Allowed) {
+    if ($xml -match ('package="' + [regex]::Escape($p) + '"')) { $hits += $p }
+  }
 }
-foreach ($p in $Suspects) {
-  if ($installed.ContainsKey($p) -and ($evidence -match [regex]::Escape($p)) -and ($hits -notcontains $p)) { $hits += $p }
+# Ничего не нашлось — берём того, кого видно в слоях экрана.
+if ($hits.Count -eq 0) {
+  foreach ($p in $Allowed) {
+    foreach ($l in $sfLines) {
+      if ($l -match [regex]::Escape($p)) { if ($hits -notcontains $p) { $hits += $p } }
+    }
+  }
 }
 
 Write-Host ""
 if ($hits.Count -eq 0) {
-  Write-Warn "отдельного пакета не видно — страница рисуется внутри лончера"
-  Write-Dim "тогда её убирает только переключатель в настройках рабочего стола; ниже — ключи"
-} else {
-  Write-Ok ("нашёл: " + ($hits -join ', '))
+  Write-Warn "страницу рисует не отдельное приложение, а сам лончер"
+  Write-Dim "такую страницу выключает только переключатель в настройках рабочего стола"
+  Write-Dim "долгое нажатие на пустом месте рабочего стола → Настройки рабочего стола →"
+  Write-Dim "страница «Помощник» / «Рекомендации» / «智能助手» → выключить"
+  Write-Host ""
+  Write-Dim "ключи я всё равно поставлю в 0"
+  if (-not $Find) { Set-LeftPanelOff; Write-Ok "ключи левой страницы в 0" }
+  Write-Host ""
+  Read-Host "Enter — закрыть"
+  exit 0
 }
+
+Write-Ok ("страницу рисует: " + ($hits -join ', '))
 
 if ($Find) {
   Write-Host ""
@@ -248,67 +247,35 @@ if ($Find) {
   exit 0
 }
 
-Write-Step "Гашу"
-$off = 0
+Write-Step "Гашу только это"
 foreach ($p in $hits) {
   if ($Keep -contains $p) { continue }
   $how = Disable-Package $p
-  if ($how -ne '') { Write-Ok ("{0}: {1}" -f $p, $how); $off++ }
-  else { Write-Warn ("{0}: не поддался" -f $p) }
+  if ($how -ne '') { Write-Ok ("{0}: {1}" -f $p, $how) } else { Write-Warn ("{0}: не поддался" -f $p) }
 }
 Set-LeftPanelOff
 Write-Ok "ключи левой страницы в 0"
 
-# Если страница осталась — пробуем известные пакеты-кандидаты.
 Write-Step "Проверка"
-Read-Host "Enter — свайпни на левую страницу ещё раз, потом Enter"
-$after = Get-Lines (Sh 'dumpsys window windows') 'mCurrentFocus' 2
-foreach ($l in $after) { Write-Host ("     " + $l.Trim()) -ForegroundColor DarkGray }
-
-foreach ($p in $present) {
-  if ($hits -contains $p) { continue }
-  $how = Disable-Package $p
-  if ($how -ne '') { Write-Ok ("{0}: {1}" -f $p, $how); $off++ }
-}
-
-Write-Host ""
-Write-Ok ("выключено: " + $off)
-Write-Dim "Вернуть: эта же команда с ключом -Restore"
-Write-Host ""
-
-# ---------------------------------------------------------------- остальное китайское
-
-Write-Step "Что ещё китайское осталось включённым"
-$enabled = Get-Packages ''
-$offList = Get-Packages ' -d'
-$cn = @()
-foreach ($p in $enabled) {
-  if ($offList -contains $p) { continue }
-  if ($Keep -contains $p) { continue }
-  if ($Suspects -contains $p) { continue }
-  if ($p -notmatch '^com\.(heytap|coloros|oplus|oppo|nearme|oneplus)\.') { continue }
-  if ($p -match '(security|permission|telephony|incallui|provider|camera|gallery|settings|launcher|systemui|engineer|diagnostic|update|ota|nfc|bluetooth|wifi|mms|contacts|dialer|sim|keyguard|framework|common)') { continue }
-  $cn += $p
-}
-if ($cn.Count -eq 0) {
-  Write-Ok "лишнего не видно"
+Read-Host "Enter — открой левую страницу ещё раз и нажми Enter"
+$xml2 = Get-ScreenDump
+if ($null -eq $xml2) {
+  Write-Warn "разметку снять не удалось — проверь глазами"
 } else {
-  Write-Dim ("нашлось: " + $cn.Count)
-  foreach ($p in $cn) { Write-Dim ("  " + $p) }
-  Write-Host ""
-  $ans = Read-Host "Выключить всё из списка? (y/n)"
-  if ($ans -eq 'y') {
-    $n = 0
-    foreach ($p in $cn) {
-      $how = Disable-Package $p
-      if ($how -ne '') { $n++ }
-    }
-    Write-Ok ("выключено: " + $n)
-    Write-Dim "вернуть всё: эта же команда с ключом -Restore (список выше — в scripts\debloat-cn.ps1)"
+  $still = @()
+  foreach ($p in $hits) {
+    if ($xml2 -match ('package="' + [regex]::Escape($p) + '"')) { $still += $p }
+  }
+  if ($still.Count -eq 0) {
+    Write-Ok "на странице больше нет этого приложения — убрано"
   } else {
-    Write-Dim "ничего не менял"
+    Write-Warn ("всё ещё видно: " + ($still -join ', '))
+    Write-Dim "значит страницу держит лончер; выключается только в настройках рабочего стола"
   }
 }
 
+Write-Host ""
+Write-Dim "Обои, будильник, файлы, звук и остальную систему скрипт не трогает."
+Write-Dim "Вернуть: эта же команда с ключом -Restore"
 Write-Host ""
 Read-Host "Enter — закрыть"
