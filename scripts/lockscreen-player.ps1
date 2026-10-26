@@ -20,7 +20,7 @@ param(
   [switch]$Raw
 )
 
-$ScriptVersion = '2026-10-27.2'
+$ScriptVersion = '2026-10-27.3'
 $ErrorActionPreference = "Continue"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -65,36 +65,39 @@ function Connect-Adb {
   Write-Ok "телефон: $($script:Serial)"
 }
 
-# Медиасессии: package + состояние воспроизведения (3 = играет).
-# Если формат дампа другой и состояние не читается — печатаем сырые строки,
-# а не делаем вид, что «ничего не играет».
-# Режем дамп по "MediaSessionRecord{" — иначе package= встречается несколько раз
-# на одну сессию и предыдущий разбор терял состояние (state оставался -1).
+# Медиасессии: package + состояние воспроизведения.
+# Формат Android 16: "state=PlaybackState {state=PLAYING(3), position=0, ...}" —
+# поэтому читаем и слово, и число в скобках, и голое число для старых сборок.
+# package= в дампе встречается у нескольких записей подряд, состояние относится к
+# последней увиденной.
 function Get-MediaSessions {
   $raw = Sh 'dumpsys media_session'
   $list = @()
-  foreach ($chunk in [regex]::Split($raw, 'MediaSessionRecord\{')) {
-    $mp = [regex]::Match($chunk, 'package=([A-Za-z0-9_.]+)')
-    if (-not $mp.Success) { continue }
-    $pkgName = $mp.Groups[1].Value
-    $state = -1
-    $stateLine = ''
-    $ms = [regex]::Match($chunk, 'PlaybackState\s*\{\s*state=(\d+)')
-    if ($ms.Success) {
-      $state = [int]$ms.Groups[1].Value
-      $stateLine = ($ms.Value -replace '\s+', ' ')
-    }
-    if ($stateLine -eq '') {
-      foreach ($l in ($chunk -split "`n")) {
-        if ($l -match 'state|PlaybackState') { $stateLine = ($l -replace '\s+', ' ').Trim(); break }
+  $current = $null
+  foreach ($line in ($raw -split "`n")) {
+    $mp = [regex]::Match($line, 'package=([A-Za-z0-9_.]+)')
+    if ($mp.Success) {
+      $pkgName = $mp.Groups[1].Value
+      $found = $null
+      foreach ($item in $list) { if ($item.Pkg -eq $pkgName) { $found = $item } }
+      if (-not $found) {
+        $found = [pscustomobject]@{ Pkg = $pkgName; State = -1; Line = '' }
+        $list += $found
       }
+      $current = $found
+      continue
     }
-    $known = $null
-    foreach ($item in $list) { if ($item.Pkg -eq $pkgName) { $known = $item } }
-    if ($known) {
-      if ($state -gt $known.State) { $known.State = $state }
-    } else {
-      $list += [pscustomobject]@{ Pkg = $pkgName; State = $state; Line = $stateLine }
+    if (-not $current) { continue }
+    $mNum = [regex]::Match($line, 'PlaybackState\s*\{\s*state=(?:[A-Z_]+\((\d+)\)|(\d+))')
+    if ($mNum.Success) {
+      $v = $mNum.Groups[1].Value
+      if ($v -eq '') { $v = $mNum.Groups[2].Value }
+      $current.State = [int]$v
+      $current.Line = ''
+      continue
+    }
+    if ($current.State -lt 0 -and $line -match 'state=') {
+      $current.Line = ($line -replace '\s+', ' ').Trim()
     }
   }
   return $list
@@ -143,6 +146,8 @@ if ($sessions.Count -eq 0) {
 $playing = @()
 $any = @()
 foreach ($s in $sessions) {
+  # com.android.server.telecom и прочие com.android.* — служебные записи, они не играют
+  if ($s.Pkg -like 'com.android.*') { continue }
   $label = 'состояние не прочитано'
   if ($s.State -eq 3) { $label = 'играет' }
   elseif ($s.State -eq 2) { $label = 'буферизует' }

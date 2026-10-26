@@ -792,6 +792,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lockscreen-player.ps
 и всё равно проверяет уведомления, потому что карточка плеера на локскрине висит и
 на паузе.
 
+**Формат состояния в Android 16.** Реальный дамп (PKG110, Android 16):
+
+```
+    package=com.android.server.telecom
+      package=re.sova.five
+      state=PlaybackState {state=PLAYING(3), position=0, buffered position=0, ...}
+```
+
+Два урока:
+
+* состояние печатается как `PLAYING(3)`, а не `3` — регулярка на голое число не
+  ловит;
+* `package=` в дампе идёт несколько раз подряд, и первым стоит
+  `com.android.server.telecom` (служебная запись). Состояние относится к
+  **последней** увиденной записи, а `com.android.*` надо вообще не показывать.
+
+После правки скрипт печатает `re.sova.five: играет (state=3)` и переходит к
+важности канала.
+
 **Кэш raw.githubusercontent.** После правки скрипта старый файл может ещё отдаваться
 из кэша CDN: в логе видно старые фразы, которых в `main` уже нет. Поэтому у скрипта
 теперь есть `$ScriptVersion` и он печатает её первой строкой. Если версия старая —
