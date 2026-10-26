@@ -381,6 +381,10 @@ test('lockscreen-player: включает карточку плеера и об�
   assert.ok(src.includes('dumpsys media_session'), 'нужно смотреть, какое приложение реально играет');
   assert.ok(src.includes('dumpsys notification --noredact'), 'и важность канала уведомления');
   assert.ok(src.includes('важность'), 'вердикт должен объяснять про важность канала');
+  // разбор медиасессий режем по MediaSessionRecord: package= встречается несколько раз
+  assert.ok(src.includes("MediaSessionRecord"), 'сессии надо резать по MediaSessionRecord');
+  assert.ok(src.includes('PlaybackState'), 'состояние воспроизведения должно читаться');
+  assert.ok(src.includes('[switch]$Raw'), 'нужен -Raw для отладки состояния');
   assert.ok(src.includes('нельзя сделать из adb'), 'нельзя обещать то, что из shell не меняется');
 });
 
