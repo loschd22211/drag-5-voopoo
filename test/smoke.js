@@ -434,6 +434,36 @@ test('breeno-gesture: пробует роль ASSISTANT и умеет верну
   assert.ok(src.includes('$ScriptVersion'), 'версия печатается');
 });
 
+test('left-panel: находит страницу по дампу и не трогает систему', () => {
+  const file = path.join(__dirname, '..', 'scripts', 'left-panel.ps1');
+  assert.ok(fs.existsSync(file), 'скрипт должен существовать');
+  const src = fs.readFileSync(file, 'utf8');
+  // страницу определяем по фактам с устройства, а не угадываем имя пакета
+  assert.ok(src.includes('dumpsys window'), 'смотрим окна');
+  assert.ok(src.includes('dumpsys SurfaceFlinger --list'), 'и слои экрана');
+  assert.ok(src.includes('logcat -d'), 'и журнал запуска');
+  assert.ok(src.includes('Read-Host'), 'просит открыть страницу и подтвердить');
+  assert.ok(src.includes('[switch]$Restore'), 'нужен откат');
+  assert.ok(src.includes('[switch]$Find'), 'нужен режим только посмотреть');
+  assert.ok(src.includes('pm suspend --user 0'), 'если disable-user не сработал — suspend');
+  assert.ok(!src.includes('pm uninstall'), 'удалять пакеты нельзя');
+  assert.ok(src.includes('com.oplus.games'), 'гейм-бар в списке неприкосновенных');
+  assert.ok(src.includes('key_com_coloros_assistantscreen'), 'ключи левой страницы тоже снимаются');
+});
+
+test('assistant-keys: показывает, что про помощника реально есть в прошивке', () => {
+  const file = path.join(__dirname, '..', 'scripts', 'assistant-keys.ps1');
+  assert.ok(fs.existsSync(file), 'скрипт должен существовать');
+  const src = fs.readFileSync(file, 'utf8');
+  assert.ok(src.includes('get-role-holders android.app.role.ASSISTANT'), 'кто держит роль');
+  assert.ok(src.includes("Show-Keys 'secure'"), 'ключи secure');
+  assert.ok(src.includes("Show-Keys 'system'"), 'ключи system');
+  assert.ok(src.includes("Show-Keys 'global'"), 'ключи global');
+  assert.ok(src.includes('android.settings.VOICE_INPUT_SETTINGS'), 'открывает выбор помощника');
+  assert.ok(!src.includes('settings put'), 'скрипт только читает');
+  assert.ok(!/pm (disable|suspend|uninstall)/.test(src), 'и ничего не выключает');
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {
