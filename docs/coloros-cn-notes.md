@@ -99,6 +99,82 @@ root, запускается из Smart Sidebar, сайдбара или чер�
 
 ---
 
+## 2.5. Breeno не отпускает кнопку даже после назначения Google
+
+Самая частая картина на ColorOS CN: команда
+
+```bash
+adb shell settings put secure assistant com.google.android.googlequicksearchbox/com.google.android.voiceinteraction.GsaVoiceInteractionService
+```
+
+проходит, `settings get secure assistant` показывает Google — **а долгое нажатие всё равно
+открывает Breeno**. Причина: Breeno ставит собственный обработчик клавиши, который
+работает поверх роли «цифрового помощника». Пока его пакет включён, кнопка принадлежит ему.
+
+Лечится отключением пакета для текущего пользователя — **без root и обратимо**:
+
+```bash
+adb shell pm list packages | grep -Ei 'breeno|voiceassist|speechassist|assistantscreen|aiunit'
+adb shell pm disable-user --user 0 com.oplus.breeno      # имя взять из списка выше
+```
+
+Проверить, что отключилось:
+
+```bash
+adb shell pm list packages -d | grep -i breeno            # должен появиться в списке отключённых
+```
+
+Вернуть как было:
+
+```bash
+adb shell pm enable com.oplus.breeno
+# если пакет был не отключён, а удалён для пользователя:
+adb shell cmd package install-existing com.oplus.breeno
+```
+
+Готовые скрипты делают это сами и проверяют результат:
+
+```bash
+bash scripts/breeno-off.sh              # Linux/macOS
+bash scripts/breeno-off.sh --restore    # вернуть
+```
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\breeno-off.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\breeno-off.ps1 -Restore
+```
+
+В веб-интерфейсе это карточка «Фирменный ассистент (Breeno)»: «Снять Breeno» и
+«Вернуть всё обратно».
+
+### Что важно знать
+
+- `pm disable-user` не удаляет приложение и не трогает системный раздел — только скрывает
+  пакет для пользователя. Возврат в любой момент.
+- Не отключай `com.oplus.ocs`, `com.oplus.aiunit.engine`, `coloros.ota` — это не ассистенты,
+  а облако/движок/обновления. Скрипты их отсекают автоматически.
+- Если `pm disable-user` отвечает `Error`, значит прошивка защитила пакет: тогда только
+  Activity Launcher / MiCTS / root (шаги 2–4 выше).
+- После перезагрузки отключение сохраняется (в отличие от `settings put secure`), но
+  обновление прошивки может вернуть пакет в строй — скрипт можно просто прогнать снова.
+
+### Отдельная ловушка: `$` в именах активностей
+
+Классы вида `com.android.settings/.Settings$PowerMenuSettingsActivity` содержат `$`.
+Если передать такую команду без кавычек, **шелл телефона** подставит вместо
+`$PowerMenuSettingsActivity` пустую переменную, и откроется просто «Настройки»
+(в выводе будет `cmp=com.android.settings/.Settings`). Правильно — в одинарных кавычках:
+
+```bash
+adb shell am start -n 'com.android.settings/.Settings$PowerMenuSettingsActivity'
+```
+
+```powershell
+& $adb -s $serial shell "am start -n 'com.android.settings/.Settings`$PowerMenuSettingsActivity'"
+```
+
+---
+
 ## 3. Что не заведётся даже при рабочей кнопке
 
 - **«Окей, Google» / Voice Match.** На CN-сборках часто отсутствует системная библиотека,

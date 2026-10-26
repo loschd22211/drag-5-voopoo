@@ -169,6 +169,39 @@ test('PowerShell-скрипты сохранены в UTF-8 с BOM (иначе P
   }
 });
 
+test('фирменные ассистенты: находит Breeno и не трогает com.oplus.ocs', async () => {
+  const res = await adb.listVendorAssistants('MOCK000ACE5');
+  assert.equal(res.ok, true);
+  const names = res.packages.map((p) => p.package);
+  assert.ok(names.includes('com.oplus.breeno'), 'Breeno должен быть в списке');
+  assert.ok(!names.includes('com.oplus.ocs'), 'com.oplus.ocs — не ассистент, его нельзя предлагать');
+});
+
+test('Breeno отключается и включается обратно', async () => {
+  const off = await adb.disablePackages('MOCK000ACE5', ['com.oplus.breeno']);
+  assert.equal(off.ok, true, 'не удалось отключить Breeno');
+  assert.deepEqual(off.verified, ['com.oplus.breeno']);
+
+  const listed = await adb.listVendorAssistants('MOCK000ACE5');
+  const breeno = listed.packages.find((p) => p.package === 'com.oplus.breeno');
+  assert.equal(breeno.disabled, true, 'состояние не обновилось');
+
+  const on = await adb.enablePackages('MOCK000ACE5', ['com.oplus.breeno']);
+  assert.equal(on.ok, true, 'не удалось включить обратно');
+  const listed2 = await adb.listVendorAssistants('MOCK000ACE5');
+  assert.equal(listed2.packages.find((p) => p.package === 'com.oplus.breeno').disabled, false);
+});
+
+test('защищённые пакеты не отключаются', async () => {
+  const res = await adb.disablePackages('MOCK000ACE5', ['com.oplus.ocs']);
+  assert.equal(res.requested.length, 0, 'com.oplus.ocs должен отсекаться до выполнения команд');
+});
+
+test('мусорные имена пакетов не попадают в shell', async () => {
+  const res = await adb.disablePackages('MOCK000ACE5', ['com.oplus.breeno; rm -rf /']);
+  assert.equal(res.requested.length, 0);
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {

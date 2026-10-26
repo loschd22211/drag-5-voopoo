@@ -8,6 +8,7 @@ const state = {
   serial: null,
   diagnosis: null,
   lastSnapshot: null,
+  vendor: null,
   log: [],
 };
 
@@ -315,6 +316,93 @@ async function simple(route, payload, label, targetEl) {
 }
 
 // ---------------------------------------------------------------------------
+// фирменные ассистенты (Breeno)
+// ---------------------------------------------------------------------------
+
+function renderVendor(data) {
+  const el = $('#vendorOut');
+  if (!data.ok) {
+    el.innerHTML = `<div class="hint error">${esc(data.error || 'не удалось получить список')}</div>`;
+    return;
+  }
+  if (!data.packages.length) {
+    el.innerHTML = '<div class="hint ok">Фирменных ассистентов не найдено — Breeno на этом устройстве нет.</div>';
+    return;
+  }
+  el.innerHTML = `
+    <table>
+      <thead><tr><th>Пакет</th><th>Тип</th><th>Состояние</th></tr></thead>
+      <tbody>
+        ${data.packages
+          .map(
+            (p) => `<tr>
+              <td><code>${esc(p.package)}</code></td>
+              <td class="muted small">${esc(p.kind)}${p.protected ? ' · защищён, не трогаю' : ''}</td>
+              <td>${
+                p.disabled
+                  ? '<span class="pill no">отключён</span>'
+                  : '<span class="pill ok">включён</span>'
+              }</td>
+            </tr>`,
+          )
+          .join('')}
+      </tbody>
+    </table>
+    <p class="muted small">Отключение действует для текущего пользователя и снимается кнопкой «Вернуть всё обратно».</p>`;
+}
+
+async function vendorList() {
+  const data = await api('/api/vendor', { serial: state.serial });
+  state.vendor = data;
+  renderVendor(data);
+  if (data.ok) log(`фирменные ассистенты: ${data.packages.map((p) => p.package).join(', ') || 'нет'}`);
+}
+
+function vendorTargets() {
+  const packages = (state.vendor && state.vendor.packages) || [];
+  return packages.filter((p) => !p.protected).map((p) => p.package);
+}
+
+async function vendorDisable() {
+  if (!state.vendor) await vendorList();
+  const targets = vendorTargets();
+  if (!targets.length) {
+    $('#vendorOut').innerHTML =
+      '<div class="hint warn">Нечего отключать: фирменных ассистентов не найдено или они защищены.</div>';
+    return;
+  }
+  const data = await api('/api/vendor/disable', { serial: state.serial, packages: targets });
+  const ok = data.verified || [];
+  const failed = (data.steps || []).filter((s) => !s.ok);
+  $('#vendorOut').innerHTML = `
+    <div class="hint ${data.ok ? 'ok' : 'warn'}">
+      ${
+        data.ok
+          ? 'Отключено. Зажми кнопку питания — теперь должен открыться Gemini.'
+          : 'Часть пакетов не отключилась — прошивка их защищает. Ниже подробности.'
+      }
+    </div>
+    <table>
+      <tr><th>отключено</th><td>${ok.length ? esc(ok.join(', ')) : '—'}</td></tr>
+      ${failed.length ? `<tr><th>не вышло</th><td>${esc(failed.map((f) => `${f.package}: ${f.out}`).join(' | '))}</td></tr>` : ''}
+    </table>
+    <p class="muted small">Вернуть обратно — кнопка «Вернуть всё обратно».</p>`;
+  log(`снятие Breeno: ${data.ok ? 'ок' : 'частично'}`);
+  await vendorList();
+}
+
+async function vendorEnable() {
+  if (!state.vendor) await vendorList();
+  const targets = ((state.vendor && state.vendor.packages) || []).map((p) => p.package);
+  if (!targets.length) return;
+  const data = await api('/api/vendor/enable', { serial: state.serial, packages: targets });
+  $('#vendorOut').innerHTML = `<div class="hint ${data.ok ? 'ok' : 'warn'}">
+    ${data.ok ? 'Всё включено обратно.' : `Не удалось вернуть: ${esc((data.stillDisabled || []).join(', '))}`}</div>`;
+  log('возврат фирменных ассистентов выполнен');
+  await vendorList();
+}
+
+// ---------------------------------------------------------------------------
 // снимки настроек
 // ---------------------------------------------------------------------------
 
@@ -442,6 +530,9 @@ async function init() {
         else if (action === 'test-assist') await testAssist();
         else if (action === 'grant-mic') await simple('/api/grant-mic', { package: 'com.google.android.apps.bard' }, 'микрофон Gemini', '#checkOut');
         else if (action === 'battery') await simple('/api/battery', {}, 'оптимизация батареи', '#checkOut');
+        else if (action === 'vendor-list') await vendorList();
+        else if (action === 'vendor-disable') await vendorDisable();
+        else if (action === 'vendor-enable') await vendorEnable();
         else if (action === 'snapshot') await snapshot();
         else if (action === 'diff') await diff();
         else if (action === 'export-report') exportReport();

@@ -21,6 +21,7 @@ const DEFAULT_STATE = {
   assistant: null,
   voiceInteractionService: null,
   powerAction: 'power_menu',
+  disabled: [],
   paired: false,
   connected: true,
   prefs: {
@@ -181,6 +182,42 @@ function handle(args) {
 
   if (sh === 'pm list packages') {
     out(PACKAGES.map((p) => `package:${p}`).join('\n'));
+    return 0;
+  }
+
+  if (sh === 'pm list packages -d' || sh === 'pm list packages -d --user 0') {
+    const disabled = state.disabled || [];
+    out(disabled.map((p) => `package:${p}`).join('\n'));
+    return 0;
+  }
+
+  let pd = sh.match(/^pm disable-user(?:\s+--user\s+\d+)?\s+(\S+)$/);
+  if (pd) {
+    const pkg = pd[1];
+    if (!PACKAGES.includes(pkg)) {
+      out(`Error: java.lang.IllegalArgumentException: Unknown package: ${pkg}`);
+      return 1;
+    }
+    if (/com\.oplus\.ocs$/i.test(pkg)) {
+      out('Error: package is protected system component');
+      return 1;
+    }
+    state.disabled = [...new Set([...(state.disabled || []), pkg])];
+    saveState(state);
+    out(`Package ${pkg} new state: disabled-user`);
+    return 0;
+  }
+
+  let pe = sh.match(/^pm enable\s+(\S+)$/);
+  if (pe) {
+    state.disabled = (state.disabled || []).filter((p) => p !== pe[1]);
+    saveState(state);
+    out(`Package ${pe[1]} new state: enabled`);
+    return 0;
+  }
+
+  if (/^cmd package install-existing\s+/.test(sh)) {
+    out('Package installed for user: 0');
     return 0;
   }
 

@@ -26,7 +26,13 @@ const PACKAGES = {
 };
 
 /** Пакеты, в которых может жить фирменный китайский ассистент (Breeno и родня). */
-const VENDOR_ASSISTANT_RE = /breeno|voiceassist|aiunit|assistantscreen|com\.oplus\.ocs/i;
+const VENDOR_ASSISTANT_RE = /breeno|voiceassist|speechassist|assistantscreen|aiunit/i;
+
+/**
+ * Пакеты, которые НЕЛЬЗЯ отключать, даже если они попали под регулярку:
+ * это не голосовые ассистенты, а системные/облачные службы OPPO.
+ */
+const VENDOR_DENYLIST = [/com\.oplus\.ocs$/i, /com\.oplus\.aiunit\.engine$/i, /coloros\.ota/i];
 
 /** Известные компоненты голосовых сервисов Google (fallback, если запрос сервисов не сработал). */
 const KNOWN_VOICE_SERVICES = [
@@ -592,6 +598,77 @@ async function rawCommand(serial, cmd) {
 }
 
 // ---------------------------------------------------------------------------
+// фирменные ассистенты (Breeno и родня): найти и обратимо снять
+// ---------------------------------------------------------------------------
+
+function isDeniedVendorPackage(pkg) {
+  return VENDOR_DENYLIST.some((re) => re.test(pkg));
+}
+
+/** Список фирменных ассистентов на устройстве + отключены ли они уже. */
+async function listVendorAssistants(serial) {
+  const enabledRes = await shell(serial, 'pm list packages', { timeout: 30000 });
+  const disabledRes = await shell(serial, 'pm list packages -d', { timeout: 30000 });
+  const enabled = parsePackageList(enabledRes.stdout || '');
+  const disabled = parsePackageList(disabledRes.stdout || '');
+  const all = [...new Set([...enabled, ...disabled])].filter((p) => VENDOR_ASSISTANT_RE.test(p));
+  return {
+    ok: enabledRes.ok,
+    packages: all
+      .map((pkg) => ({
+        package: pkg,
+        disabled: disabled.has(pkg),
+        protected: isDeniedVendorPackage(pkg),
+        kind: /breeno/i.test(pkg) ? 'Breeno' : 'голосовой сервис OPPO/HeyTap',
+      }))
+      .sort((a, b) => Number(a.protected) - Number(b.protected) || a.package.localeCompare(b.package)),
+  };
+}
+
+/**
+ * Отключает пакеты для текущего пользователя. Обратимо: enablePackages / pm enable.
+ * `pm disable-user` не требует root и не удаляет приложение.
+ */
+async function disablePackages(serial, packages) {
+  const steps = [];
+  const targets = (Array.isArray(packages) ? packages : [packages])
+    .filter((p) => typeof p === 'string' && /^[a-zA-Z0-9_.]+$/.test(p))
+    .filter((p) => !isDeniedVendorPackage(p));
+
+  for (const pkg of targets) {
+    const r = await shell(serial, `pm disable-user --user 0 ${pkg}`, { timeout: 20000 });
+    const failed = /Error|Exception|not installed|Unknown package/i.test(r.stdout + r.stderr);
+    steps.push({ package: pkg, ok: r.ok && !failed, out: clip(r.stdout + r.stderr, 600) });
+  }
+
+  const after = await shell(serial, 'pm list packages -d', { timeout: 30000 });
+  const disabledNow = parsePackageList(after.stdout || '');
+  const verified = targets.filter((p) => disabledNow.has(p));
+  return { ok: verified.length === targets.length, steps, verified, requested: targets };
+}
+
+/** Включает пакеты обратно. */
+async function enablePackages(serial, packages) {
+  const steps = [];
+  const targets = (Array.isArray(packages) ? packages : [packages]).filter(
+    (p) => typeof p === 'string' && /^[a-zA-Z0-9_.]+$/.test(p),
+  );
+  for (const pkg of targets) {
+    let r = await shell(serial, `pm enable ${pkg}`, { timeout: 20000 });
+    let out = r.stdout + r.stderr;
+    if (/Error|Exception/i.test(out)) {
+      // если пакет был удалён для пользователя, а не отключён
+      r = await shell(serial, `cmd package install-existing ${pkg}`, { timeout: 25000 });
+      out = r.stdout + r.stderr;
+    }
+    steps.push({ package: pkg, ok: r.ok && !/Error|Exception/i.test(out), out: clip(out, 600) });
+  }
+  const after = await shell(serial, 'pm list packages -d', { timeout: 30000 });
+  const disabledNow = parsePackageList(after.stdout || '');
+  return { ok: targets.every((p) => !disabledNow.has(p)), steps, stillDisabled: targets.filter((p) => disabledNow.has(p)) };
+}
+
+// ---------------------------------------------------------------------------
 // беспроводное подключение
 // ---------------------------------------------------------------------------
 
@@ -626,6 +703,9 @@ module.exports = {
   snapshotSettings,
   diffSnapshots,
   rawCommand,
+  listVendorAssistants,
+  disablePackages,
+  enablePackages,
   pair,
   connect,
   enableTcpip,
