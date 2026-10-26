@@ -355,6 +355,23 @@ test('плеер на локскрине и AOSP-ключи кнопки заш�
   assert.ok(src.includes('cached_apps_freezer'), 'нужно снимать заморозку фоновых приложений');
 });
 
+test('в строках нет $переменная: — PowerShell падает на этом', () => {
+  // "side_button=$now: ДА" ломало скрипт: PS 5.1 читает $now: как ссылку на диск.
+  // $script:, $env: и прочие настоящие скоупы — можно.
+  const dir = path.join(__dirname, '..', 'scripts');
+  const allowed = new Set(['env', 'script', 'global', 'local', 'private', 'using', 'variable', 'function']);
+  const bad = [];
+  for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.ps1'))) {
+    const src = fs.readFileSync(path.join(dir, f), 'utf8');
+    const re = /\$([A-Za-z_][A-Za-z0-9_]*):/g;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      if (!allowed.has(m[1].toLowerCase())) bad.push(`${f}: $${m[1]}:`);
+    }
+  }
+  assert.ok(bad.length === 0, 'найдено: ' + bad.join(', '));
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {
