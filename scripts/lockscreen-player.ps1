@@ -20,7 +20,7 @@ param(
   [switch]$Raw
 )
 
-$ScriptVersion = '2026-10-27.4'
+$ScriptVersion = '2026-10-27.5'
 $ErrorActionPreference = "Continue"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -121,6 +121,27 @@ function Get-NotificationInfo {
   return $null
 }
 
+# Параметры самого канала: важность и признаки блокировки.
+# Если канал заблокирован приложением или ромом, важность руками не поднять —
+# и тогда карточки плеера не будет ни при каких настройках.
+function Get-ChannelInfo {
+  param([string]$ChannelId)
+  $raw = Sh 'dumpsys notification --noredact'
+  $needle = "mId='" + $ChannelId + "'"
+  foreach ($line in ($raw -split "`n")) {
+    if (-not $line.Contains($needle)) { continue }
+    $imp = [regex]::Match($line, 'mImportance=(\d+)')
+    $user = [regex]::Match($line, 'mUserLockedFields=(\d+)')
+    return [pscustomobject]@{
+      Importance    = $(if ($imp.Success) { [int]$imp.Groups[1].Value } else { -1 })
+      LockedDefault = ($line -match 'mImportanceLockedDefaultApp=true')
+      LockedOem     = ($line -match 'mImportanceLockedByOEM=true')
+      UserFields    = $(if ($user.Success) { $user.Groups[1].Value } else { '?' })
+    }
+  }
+  return $null
+}
+
 # ---------------------------------------------------------------- main
 
 Connect-Adb
@@ -189,7 +210,18 @@ foreach ($pkg in $any) {
     Write-Ok ("{0}: канал {1}, важность {2} ({3}) — плееру есть что показать" -f $pkg, $info.Channel, $info.Importance, $level)
   } else {
     Write-Warn ("{0}: канал {1}, важность {2} ({3}) — ColorOS такие на локскрин не выносит" -f $pkg, $info.Channel, $info.Importance, $level)
-    $needFix += [pscustomobject]@{ Pkg = $pkg; Channel = $info.Channel; Importance = $info.Importance }
+    $ch = Get-ChannelInfo -ChannelId $info.Channel
+    if ($ch) {
+      $locked = $ch.LockedDefault -or $ch.LockedOem
+      if ($locked) {
+        Write-Warn ("   канал заблокирован (приложение: {0}, ром: {1}) — важность поменять нельзя" -f $ch.LockedDefault, $ch.LockedOem)
+      } else {
+        Write-Dim ("   канал не заблокирован (userLockedFields={0}) — важность можно поднять руками" -f $ch.UserFields)
+      }
+    } else {
+      Write-Dim "   строку канала в дампе не нашёл"
+    }
+    $needFix += [pscustomobject]@{ Pkg = $pkg; Channel = $info.Channel; Importance = $info.Importance; Locked = $(if ($ch) { $ch.LockedDefault -or $ch.LockedOem } else { $false }) }
   }
 }
 
@@ -203,6 +235,11 @@ else { foreach ($k in $sysKeys) { Write-Dim $k } }
 
 Write-Host ""
 if ($needFix.Count -gt 0) {
+  $allLocked = @($needFix | Where-Object { -not $_.Locked }).Count -eq 0
+  if ($allLocked) {
+    Write-Warn "каналы заблокированы приложением — поднимать нечего, карточки не будет"
+    Write-Dim "Это ограничение приложения, а не настройка телефона"
+  }
   foreach ($f in $needFix) {
     Write-Dim ("Подними важность: Настройки -> Уведомления -> {0} -> канал «{1}» -> важность «Высокая»" -f $f.Pkg, $f.Channel)
   }
