@@ -435,6 +435,35 @@ Gemini из Play Маркета → в приложении Google выбрат�
 
 ---
 
+## 2.988. Долгое нажатие полосы жестов: «быстрый поиск Breeno»
+
+На PKG110 / ColorOS 16.1 длинное нажатие на полосу жестов открывает **быстрый поиск
+Breeno**, независимо от `key_home_long_press_action=2` и
+`assist_long_press_home_enabled=1`. Это тот же случай, что и кнопка питания:
+обработчик жеста живёт в SystemUI рома, а не в AOSP.
+
+Что уже проверено на устройстве:
+
+| действие | результат |
+| --- | --- |
+| `key_home_long_press_action=2` | значение лежит, жест всё равно Breeno |
+| `pm suspend com.heytap.speechassist`, `com.coloros.assistantscreen` | страница Breeno открывается, но пишет «недоступна» |
+| `key_com_coloros_assistantscreen=0`, `remote_view_entry_com.coloros.assistantscreen=0` | привязка к Breeno осталась |
+
+`pm list packages -d` на этом устройстве показывает только `com.aiunit.aon` и
+`com.heytap.speechassist`; `com.coloros.assistantscreen` **не** disabled, а
+suspended — в списке `-d` он не появляется, хотя его активити не запускается.
+
+Дальше: узнать, какая именно активити поднимается по жесту, и погасить её пакет
+целиком.
+
+```
+# зажать полосу жестов, затем сразу:
+adb shell dumpsys activity activities | Select-String -Pattern "mResumedActivity"
+```
+
+---
+
 ## 2.989. Камера: что можно и чего нельзя из adb
 
 Качество фото из shell не меняется: обработка, шумодав и алгоритмы зашиты в
