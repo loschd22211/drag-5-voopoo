@@ -337,6 +337,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gemini-trigger.ps1 -
 
 ---
 
+## 2.97. ColorGoogle: мастер настройки на телефоне (Setup, страницы 1–5)
+
+Свежая установка открывает **не настройки, а пятистраничный мастер** «Setup · Page 1/5».
+Главный переключатель в нём **не на первой странице**, а первая страница требует
+`READ_LOGS`. Отсюда и `error=Agent not connected` в ответе провайдера: агента ещё нет.
+
+Важно: `pm grant ... READ_LOGS` на ColorOS 16 из shell не проходит
+(`Neither user 2000 nor current process has android.permission.GRANT_RUNTIME_PERMISSIONS`),
+а `appops set ... READ_LOGS allow` отвечает `Error: Unknown operation string` — в этой
+сборке операция называется иначе, поэтому скрипт перебирает написания
+(`cmd appops` с именем → `appops` со строкой операции).
+
+Мастер можно листать кнопкой **Continue**: `READ_LOGS` нужен приложению для собственного
+чтения журнала, а сам агент запускается как shell (uid 2000) и журнал ему доступен без
+этого разрешения. Если мастер не пускает дальше — идти через «Copy ADB one-shot»:
+приложение копирует в буфер обмена официальную команду (`SetupCommands.java`), её можно
+вставить в PowerShell и выполнить.
+
+---
+
 ## 3. Что не заведётся даже при рабочей кнопке
 
 - **«Окей, Google» / Voice Match.** На CN-сборках часто отсутствует системная библиотека,
