@@ -792,6 +792,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\lockscreen-player.ps
 и всё равно проверяет уведомления, потому что карточка плеера на локскрине висит и
 на паузе.
 
+**Кэш raw.githubusercontent.** После правки скрипта старый файл может ещё отдаваться
+из кэша CDN: в логе видно старые фразы, которых в `main` уже нет. Поэтому у скрипта
+теперь есть `$ScriptVersion` и он печатает её первой строкой. Если версия старая —
+качать с обходом кэша:
+
+```powershell
+$u = 'https://raw.githubusercontent.com/loschd22211/drag-5-voopoo/main/scripts/lockscreen-player.ps1?x=' + (Get-Random)
+Invoke-WebRequest $u -OutFile .\scripts\lockscreen-player.ps1 -UseBasicParsing
+```
+
 ---
 
 ## 2.996. Плеер на экране блокировки (сторонние приложения)

@@ -385,6 +385,10 @@ test('lockscreen-player: включает карточку плеера и об�
   assert.ok(src.includes("MediaSessionRecord"), 'сессии надо резать по MediaSessionRecord');
   assert.ok(src.includes('PlaybackState'), 'состояние воспроизведения должно читаться');
   assert.ok(src.includes('[switch]$Raw'), 'нужен -Raw для отладки состояния');
+  // версия печатается, иначе невозможно отличить старую копию из кэша raw.githubusercontent
+  assert.ok(src.includes('$ScriptVersion'), 'у скрипта должна быть версия');
+  assert.ok(src.includes('версия скрипта'), 'версия должна печататься при запуске');
+  assert.ok(!src.includes('сейчас ничего не играет'), 'старое вранье про «ничего не играет» не должно вернуться');
   assert.ok(src.includes('нельзя сделать из adb'), 'нельзя обещать то, что из shell не меняется');
 });
 
