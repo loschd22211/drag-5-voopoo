@@ -454,6 +454,18 @@ test('left-panel: сам листает, читает разметку и не �
   assert.ok(!src.includes('pm uninstall'), 'удалять пакеты нельзя');
 });
 
+test('widgets-fix: включает поставщиков виджетов и не выключает ничего', () => {
+  const file = path.join(__dirname, '..', 'scripts', 'widgets-fix.ps1');
+  assert.ok(fs.existsSync(file), 'скрипт должен существовать');
+  const src = fs.readFileSync(file, 'utf8');
+  assert.ok(src.includes('pm enable --user 0'), 'возвращает пакеты');
+  assert.ok(src.includes('pm unsuspend --user 0'), 'снимает suspend');
+  assert.ok(src.includes('dumpsys appwidget'), 'читает список виджетов');
+  assert.ok(src.includes('resolve-activity'), 'находит у приложения иконку');
+  assert.ok(!/pm (disable|uninstall)/.test(src), 'ничего не выключает');
+  assert.ok(src.includes('com.oplus.games'), 'гейм-бар не трогает');
+});
+
 test('steps-widget: возвращает счётчик шагов', () => {
   const file = path.join(__dirname, '..', 'scripts', 'steps-widget.ps1');
   assert.ok(fs.existsSync(file), 'скрипт должен существовать');
