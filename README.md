@@ -233,6 +233,7 @@ adb shell settings delete secure voice_interaction_service
 | Значение записалось, но кнопка открывает Breeno | Breeno ставит свой обработчик клавиши поверх роли помощника | `scripts/breeno-off.sh` / `breeno-off.ps1`: перебирают `disable-user → suspend → hide → uninstall` и проверяют результат по `dumpsys`. На ColorOS 16 обычно срабатывает `suspend` |
 | Значение записалось, но кнопка всё равно открывает меню питания | системный обработчик кнопки игнорирует помощника | `docs/coloros-cn-notes.md`, раздел «Activity Launcher / MiCTS» |
 | Breeno снят (`speechassist` off, `assistantscreen` suspended), а кнопка всё равно зовёт Breeno | вызов зашит в обработчик клавиши на уровне фреймворка | `scripts/gemini-trigger.ps1` — ставит ColorGoogle, он перехватывает кнопку сам |
+| `am start …robin.main.MainActivity` → `SecurityException: not exported` | активность Gemini не exported для shell | проверять только через `input keyevent --longpress 26`, см. 2.998 |
 | Плеер не виден на экране блокировки | `media_controls_lock_screen=0` | `settings put secure media_controls_lock_screen 1`, см. 2.996 |
 | `pm uninstall` → `DELETE_FAILED_INTERNAL_ERROR` | ColorOS не отдаёт пакет этим путём | `scripts/power-key-reset.ps1` перебирает `pm uninstall --user 0`, `cmd package uninstall`, затем `pm suspend` |
 | Долгое нажатие питания зовёт Breeno, а хочется меню выключения | ключ `speech_assist_power_wakeup=1` | `adb shell settings put secure speech_assist_power_wakeup 0` (обратно — `1`) |
