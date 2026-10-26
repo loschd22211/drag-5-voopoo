@@ -400,6 +400,18 @@ test('lockscreen-player: включает карточку плеера и об�
   assert.ok(src.includes('mImportanceLockedDefaultApp'), 'и признаки блокировки важности');
 });
 
+test('debloat-cn: выключает китайское, оставляет гейм-бар и умеет откат', () => {
+  const file = path.join(__dirname, '..', 'scripts', 'debloat-cn.ps1');
+  assert.ok(fs.existsSync(file), 'скрипт должен существовать');
+  const src = fs.readFileSync(file, 'utf8');
+  assert.ok(src.includes('pm disable-user --user 0'), 'выключение без удаления');
+  assert.ok(src.includes('[switch]$Restore'), 'нужен откат');
+  assert.ok(src.includes('pm enable --user 0'), 'откат включает обратно');
+  assert.ok(src.includes("'com.oplus.games'"), 'гейм-бар не должен выключаться');
+  assert.ok(src.includes('window_animation_scale 0.5'), 'ускорение интерфейса');
+  assert.ok(!/pm uninstall/.test(src), 'удалять пакеты нельзя — только disable-user');
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {
