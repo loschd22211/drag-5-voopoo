@@ -151,6 +151,34 @@ adb shell pm list packages | grep -Ei 'breeno|speechassist|voiceassist|assistant
    пользуются галерея, перевод, обработка фото. Отключай только если без этого кнопка
    не отпускает.
 
+### Что реально работает на ColorOS 16 (снято с устройства)
+
+Проверено на OnePlus Ace 5, `PKG110`, Android 16, ColorOS 16 CN, пакет
+`com.coloros.assistantscreen` (экран ассистента Breeno):
+
+| Команда | Ответ системы | Результат |
+| --- | --- | --- |
+| `pm disable-user --user 0 <pkg>` | `new state: default` | ❌ отказ, состояние не меняется |
+| `pm disable --user 0 <pkg>` | `SecurityException: Shell cannot change component state for null to 2` | ❌ shell-у запрещено |
+| `pm hide <pkg>` | `SecurityException: Access denied, requires: android.permission.MANAGE_USERS` | ❌ нужен root |
+| `pm suspend --user 0 <pkg>` | `new suspended state: true` | ✅ **работает** |
+| `pm uninstall --user 0 <pkg>` | `Failure [DELETE_FAILED_INTERNAL_ERROR]` | ❌ прошивка запрещает |
+| `pm unsuspend --user 0 <pkg>` | `new suspended state: false` | ✅ откат проходит |
+
+Вывод: **`suspend` — единственный рабочий рычаг для защищённых пакетов Breeno без root.**
+Именно эту лестницу (`disable-user → suspend → hide → uninstall`) перебирают скрипты,
+проверяя результат по состоянию, а не по тексту ответа.
+
+Проверить, что пакет действительно приостановлен:
+
+```bash
+adb shell dumpsys package com.coloros.assistantscreen | grep 'User 0:'
+# ... installed=true hidden=false suspended=true ...
+```
+
+Важно: приостановленный пакет **не появляется** в `pm list packages -d` и остаётся
+в `pm list packages --user 0` — поэтому проверять нужно `suspended=true` в `dumpsys`.
+
 ### Важно про `new state: default`
 
 Если `pm disable-user` отвечает `new state: default` — **это не успех**, а отказ: состояние

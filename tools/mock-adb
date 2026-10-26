@@ -23,6 +23,8 @@ const DEFAULT_STATE = {
   powerAction: 'power_menu',
   disabled: ['com.oplus.customize.coreapp', 'com.android.virtualization.terminal', 'com.android.devicelockcontroller'],
   uninstalled: [],
+  hidden: [],
+  suspended: [],
   paired: false,
   connected: true,
   prefs: {
@@ -90,7 +92,16 @@ const PACKAGES = [
 ];
 
 /** Эти пакеты ColorOS защищает: pm disable-user отвечает «new state: default» и ничего не меняет. */
+/**
+ * Поведение снято с реального OnePlus Ace 5 (PKG110, Android 16, ColorOS 16 CN):
+ *   pm disable-user  -> «new state: default» (отказ) для защищённых пакетов
+ *   pm disable       -> SecurityException: Shell cannot change component state for null to 2
+ *   pm hide/unhide   -> SecurityException: Access denied, requires MANAGE_USERS
+ *   pm suspend       -> РАБОТАЕТ (new suspended state: true)
+ *   pm uninstall     -> Failure [DELETE_FAILED_INTERNAL_ERROR] для защищённых
+ */
 const DISABLE_PROTECTED = new Set(['com.coloros.assistantscreen', 'com.oplus.aiunit']);
+const UNINSTALL_PROTECTED = new Set(['com.coloros.assistantscreen', 'com.oplus.aiunit']);
 
 const SETTINGS_PACKAGE_DUMP = `Packages:
   Package [com.android.settings] (1a2b3c):
@@ -196,14 +207,62 @@ function handle(args) {
   }
 
   if (sh === 'pm list packages --user 0' || sh === 'pm list packages --user 0 ') {
-    const hidden = new Set(state.uninstalled || []);
-    out(PACKAGES.filter((p) => !hidden.has(p)).map((p) => `package:${p}`).join('\n'));
+    const gone = new Set([...(state.uninstalled || []), ...(state.hidden || [])]);
+    out(PACKAGES.filter((p) => !gone.has(p)).map((p) => `package:${p}`).join('\n'));
+    return 0;
+  }
+
+  if (/^pm (un)?hide\s+\S+$/.test(sh)) {
+    const verb = sh.startsWith('pm unhide') ? 'unhide' : 'hide';
+    out(
+      `Exception occurred while executing '${verb}':\njava.lang.SecurityException: Access denied, requires: android.permission.MANAGE_USERS`,
+    );
+    return 1;
+  }
+
+  let ps = sh.match(/^pm suspend(?:\s+--user\s+\d+)?\s+(\S+)$/);
+  if (ps) {
+    const pkg = ps[1];
+    if (!PACKAGES.includes(pkg)) {
+      out(`Error: java.lang.IllegalArgumentException: Unknown package: ${pkg}`);
+      return 1;
+    }
+    state.suspended = [...new Set([...(state.suspended || []), pkg])];
+    saveState(state);
+    out(`Package ${pkg} suspended`);
+    return 0;
+  }
+
+  let pus = sh.match(/^pm unsuspend(?:\s+--user\s+\d+)?\s+(\S+)$/);
+  if (pus) {
+    state.suspended = (state.suspended || []).filter((p) => p !== pus[1]);
+    saveState(state);
+    out(`Package ${pus[1]} unsuspended`);
+    return 0;
+  }
+
+  if (/^dumpsys package com\.coloros\.assistantscreen$/.test(sh) ||
+      /^dumpsys package com\.oplus\.aiunit$/.test(sh) ||
+      /^dumpsys package com\.heytap\.speechassist$/.test(sh)) {
+    const pkg = sh.split(' ').pop();
+    const suspended = (state.suspended || []).includes(pkg);
+    const hidden = (state.hidden || []).includes(pkg);
+    out(
+      `Packages:\n  Package [${pkg}] (1a2b3c):\n    userId=1000\n    pkgFlags=[ SYSTEM HAS_CODE ALLOW_CLEAR_USER_DATA ]\n    User 0: installed=true hidden=${hidden} suspended=${suspended} stopped=false enabled=0`,
+    );
     return 0;
   }
 
   if (sh === 'pm list packages -d' || sh === 'pm list packages -d --user 0') {
     out((state.disabled || []).map((p) => `package:${p}`).join('\n'));
     return 0;
+  }
+
+  if (/^pm disable(?:\s+--user\s+\d+)?\s+\S+$/.test(sh)) {
+    out(
+      "Exception occurred while executing 'disable':\njava.lang.SecurityException: Shell cannot change component state for null to 2",
+    );
+    return 1;
   }
 
   let pd = sh.match(/^pm disable-user(?:\s+--user\s+\d+)?\s+(\S+)$/);
@@ -229,6 +288,10 @@ function handle(args) {
     const pkg = pu[1];
     if (!PACKAGES.includes(pkg)) {
       out('Failure [not installed for 0]');
+      return 1;
+    }
+    if (UNINSTALL_PROTECTED.has(pkg)) {
+      out('Failure [DELETE_FAILED_INTERNAL_ERROR]');
       return 1;
     }
     state.uninstalled = [...new Set([...(state.uninstalled || []), pkg])];
@@ -259,6 +322,7 @@ function handle(args) {
       return 1;
     }
     state.uninstalled = (state.uninstalled || []).filter((p) => p !== pkg);
+    state.hidden = (state.hidden || []).filter((p) => p !== pkg);
     saveState(state);
     out('Package installed for user: 0');
     return 0;

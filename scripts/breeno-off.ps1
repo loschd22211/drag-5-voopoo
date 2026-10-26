@@ -57,6 +57,41 @@ function Get-PackageSet($args) {
   return $set
 }
 
+# фактическое состояние: текст ответа врёт, состояние — нет
+function Test-Blocked($pkg) {
+  $dis = Sh "pm list packages -d"
+  if ($dis -match ("package:" + [regex]::Escape($pkg) + "(\r?\n|$)")) { return $true }
+  $inst = Sh "pm list packages --user 0"
+  if (-not ($inst -match ("package:" + [regex]::Escape($pkg) + "(\r?\n|$)"))) { return $true }
+  $dump = Sh "dumpsys package $pkg"
+  if ($dump -match 'suspended=true' -or $dump -match 'hidden=true') { return $true }
+  return $false
+}
+
+# лестница: disable-user -> suspend -> hide -> uninstall --user 0
+function Block-Package($pkg) {
+  foreach ($mode in @('disable-user', 'suspend', 'hide', 'uninstall')) {
+    switch ($mode) {
+      'disable-user' { $out = Sh "pm disable-user --user 0 $pkg" }
+      'suspend'      { $out = Sh "pm suspend --user 0 $pkg" }
+      'hide'         { $out = Sh "pm hide $pkg" }
+      'uninstall'    { $out = Sh "pm uninstall --user 0 $pkg" }
+    }
+    if (Test-Blocked $pkg) { $script:BlockedBy = $mode; return $true }
+    Dim ("    {0}: {1}" -f $mode, (($out -split "`r?`n")[0]))
+  }
+  $script:BlockedBy = $null
+  return $false
+}
+
+function Unblock-Package($pkg) {
+  Sh "pm unsuspend --user 0 $pkg" | Out-Null
+  Sh "pm unhide $pkg" | Out-Null
+  Sh "pm enable $pkg" | Out-Null
+  Sh "cmd package install-existing $pkg" | Out-Null
+  return (-not (Test-Blocked $pkg))
+}
+
 function Get-Role($pkg) {
   if ($pkg -match 'speechassist|breeno|voiceassist') { return 'voice' }
   if ($pkg -match 'assistantscreen') { return 'screen' }
@@ -146,13 +181,9 @@ else { Warn "помощник не Google — сначала запусти scri
 if ($Restore) {
   Step "Возвращаю фирменные ассистенты"
   foreach ($pkg in $candidates) {
-    $out = Sh "pm enable $pkg"
-    if ($out -match 'Error|Exception|Unknown package') {
-      $out = Sh "cmd package install-existing $pkg"
-    }
-    if ($out -match 'Unknown package|not found') { Dim "$pkg : на этой сборке нет — пропускаю" }
-    elseif ($out -match 'Error|Exception') { Warn "$pkg : $out" }
-    else { Ok "$pkg включён" }
+    if (-not $installed.ContainsKey($pkg)) { Dim "$pkg : на этой сборке нет — пропускаю"; continue }
+    if (Unblock-Package $pkg) { Ok "$pkg включён (снял suspend/hidden/enable)" }
+    else { Warn "$pkg не удалось вернуть — проверь вручную: pm enable $pkg" }
   }
   Dim "Проверь: долгое нажатие снова откроет Breeno."
   Read-Host "Enter - закрыть"
@@ -185,29 +216,15 @@ if (-not (Ask "Продолжить?")) { Die "отменено" }
 
 $failed = @()
 foreach ($pkg in $targets) {
-  $out = Sh "pm disable-user --user 0 $pkg"
-  if ($out -match 'new state: disabled') { Ok "$pkg отключён" }
-  else { Warn "$pkg не поддался: $out"; $failed += $pkg }
-}
-
-if ($failed.Count -gt 0 -and $Uninstall) {
-  Step "Повторяю через uninstall --user 0"
-  $still = @()
-  foreach ($pkg in $failed) {
-    $out = Sh "pm uninstall --user 0 $pkg"
-    if ($out -match 'Success') { Ok "$pkg скрыт для пользователя (вернуть: -Restore)" }
-    else { Warn "$pkg : $out"; $still += $pkg }
-  }
-  $failed = $still
+  Dim "$pkg :"
+  if (Block-Package $pkg) { Ok "$pkg заблокирован (способ: $($script:BlockedBy))" }
+  else { Warn "$pkg не поддался ни одному способу"; $failed += $pkg }
 }
 
 Step "Проверяю результат"
-$disabledAfter  = Get-PackageSet "pm list packages -d"
-$installedAfter = Get-PackageSet "pm list packages --user 0"
 $reallyFailed = @()
 foreach ($pkg in $targets) {
-  if ($disabledAfter.ContainsKey($pkg)) { Ok "$pkg отключён" }
-  elseif (-not $installedAfter.ContainsKey($pkg)) { Ok "$pkg скрыт для пользователя" }
+  if (Test-Blocked $pkg) { Ok "$pkg заблокирован" }
   else { Warn "$pkg всё ещё активен"; $reallyFailed += $pkg }
 }
 
@@ -223,7 +240,7 @@ if ($reallyFailed.Count -eq 0) {
   Dim "Если кнопка открывает меню выключения, а не Gemini — прогони scripts\oneclick.ps1"
 } else {
   Warn "Прошивка не дала снять: $($reallyFailed -join ', ')"
-  Dim "Попробуй жёстче:  scripts\breeno-off.ps1 -Uninstall"
+  Dim "Перебрал disable-user, suspend, hide и uninstall — прошивка не дала."
   Dim "Если и это не поможет — Activity Launcher (assistantguidedialog) или root."
 }
 Dim "Вернуть как было:  scripts\breeno-off.ps1 -Restore"

@@ -198,19 +198,32 @@ test('голосовой пакет Breeno отключается и включ�
   assert.equal(listed2.packages.find((p) => p.package === 'com.heytap.speechassist').disabled, false);
 });
 
-test('защищённый пакет не отключается, но скрывается через uninstall --user 0', async () => {
-  const hard = await adb.disablePackages('MOCK000ACE5', ['com.coloros.assistantscreen']);
-  assert.equal(hard.ok, false, 'disable-user не должен «удаваться» на защищённом пакете');
-  assert.deepEqual(hard.failed, ['com.coloros.assistantscreen']);
-
-  const withUninstall = await adb.disablePackages('MOCK000ACE5', ['com.coloros.assistantscreen'], {
-    uninstallForCurrentUser: true,
-  });
-  assert.equal(withUninstall.ok, true, 'uninstall --user 0 должен сработать');
-  assert.ok(withUninstall.steps.some((st) => st.mode === 'uninstall-user' && st.ok));
+test('защищённый пакет берётся suspend, когда disable-user отказал', async () => {
+  const res = await adb.disablePackages('MOCK000ACE5', ['com.coloros.assistantscreen']);
+  assert.equal(res.ok, true, 'лестница стратегий должна была найти рабочий способ');
+  const result = res.results.find((r) => r.package === 'com.coloros.assistantscreen');
+  assert.equal(result.workedMode, 'suspend', 'на этом устройстве работает именно suspend');
+  const refused = result.attempts.find((a) => a.mode === 'disable-user');
+  assert.equal(refused.blocked, false);
+  assert.match(refused.refuseReason, /проигнорировала/i, 'отказ должен быть объяснён');
 
   const restored = await adb.enablePackages('MOCK000ACE5', ['com.coloros.assistantscreen']);
-  assert.equal(restored.ok, true, 'пакет должен возвращаться через install-existing');
+  assert.equal(restored.ok, true, 'пакет должен возвращаться');
+  const state = await adb.inspectPackageState('MOCK000ACE5', 'com.coloros.assistantscreen');
+  assert.equal(state.blocked, false);
+  assert.equal(state.suspended, false);
+});
+
+test('отчёт по стратегиям: hide и disable на Android 16 недоступны shell-у', async () => {
+  const res = await adb.disablePackages('MOCK000ACE5', ['com.oplus.aiunit'], {
+    strategies: ['disable-user', 'hide', 'disable'],
+  });
+  assert.equal(res.ok, false, 'ни одна из этих стратегий не должна сработать');
+  const attempts = res.results[0].attempts;
+  assert.ok(attempts.some((a) => a.mode === 'hide' && /MANAGE_USERS/.test(a.refuseReason || '')));
+  assert.ok(
+    attempts.some((a) => a.mode === 'disable' && /не может менять состояние/i.test(a.refuseReason || '')),
+  );
 });
 
 test('защищённые пакеты не отключаются', async () => {

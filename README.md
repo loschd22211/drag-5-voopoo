@@ -226,7 +226,7 @@ adb shell settings delete secure voice_interaction_service
 | Симптом | Причина | Что делать |
 | --- | --- | --- |
 | Назначение «не применилось» (значение вернулось) | прошивка защищает `Settings.Secure` от записи через adb | открыть экран «Power button» из шага 5 и переключить руками + `docs/coloros-cn-notes.md` |
-| Значение записалось, но кнопка открывает Breeno | Breeno ставит свой обработчик клавиши поверх роли помощника | `scripts/breeno-off.sh` / `breeno-off.ps1` (на ColorOS 16 Breeno = `com.heytap.speechassist` + `com.coloros.assistantscreen`) |
+| Значение записалось, но кнопка открывает Breeno | Breeno ставит свой обработчик клавиши поверх роли помощника | `scripts/breeno-off.sh` / `breeno-off.ps1`: перебирают `disable-user → suspend → hide → uninstall` и проверяют результат по `dumpsys`. На ColorOS 16 обычно срабатывает `suspend` |
 | Значение записалось, но кнопка всё равно открывает меню питания | системный обработчик кнопки игнорирует помощника | `docs/coloros-cn-notes.md`, раздел «Activity Launcher / MiCTS» |
 | Gemini открывается, но не слушает микрофон | нет разрешения | шаг 4 → «Выдать микрофон Gemini» |
 | «Окей, Google» не работает вообще | на китайских сборках часто нет нужной системной библиотеки | кнопка будет работать, голосовая активация — нет; это ограничение прошивки |

@@ -398,8 +398,30 @@ async function vendorDisable({ uninstallForCurrentUser = false } = {}) {
       ${hintText}
     </div>
     <table>
-      <tr><th>отключено</th><td>${ok.length ? esc(ok.join(', ')) : '—'}</td></tr>
-      ${failed.length ? `<tr><th>не вышло</th><td>${esc(failed.map((f) => `${f.package}: ${f.out}`).join(' | '))}</td></tr>` : ''}
+      <tr><th>заблокировано</th><td>${ok.length ? esc(ok.join(', ')) : '—'}</td></tr>
+      <tr><th>способ</th><td>${
+        esc(
+          (data.results || [])
+            .filter((r) => r.workedMode)
+            .map((r) => `${r.package}: ${r.workedMode}`)
+            .join(', ') || '—',
+        )
+      }</td></tr>
+      ${
+        (data.results || []).some((r) => !r.blocked)
+          ? `<tr><th>не поддались</th><td>${esc(
+              (data.results || [])
+                .filter((r) => !r.blocked)
+                .map(
+                  (r) =>
+                    `${r.package}: ${(r.attempts || [])
+                      .map((a) => `${a.mode} → ${a.refuseReason || 'отказ'}`)
+                      .join('; ')}`,
+                )
+                .join(' | '),
+            )}</td></tr>`
+          : ''
+      }
     </table>
     <p class="muted small">Вернуть обратно — кнопка «Вернуть всё обратно».</p>`;
   log(`снятие Breeno: ${data.ok ? 'ок' : 'частично'}`);

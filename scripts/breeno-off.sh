@@ -47,6 +47,49 @@ ok "телефон: $SERIAL"
 
 sh_() { "$ADB_BIN" -s "$SERIAL" shell "$1" 2>&1 | tr -d '\r'; }
 
+# фактическое состояние: текст ответа врёт, состояние — нет
+is_blocked() {
+  local pkg="$1"
+  local dis inst dump
+  dis=$(sh_ 'pm list packages -d')
+  inst=$(sh_ 'pm list packages --user 0')
+  dump=$(sh_ "dumpsys package $pkg")
+  printf '%s\n' "$dis" | grep -qx "package:$pkg" && return 0
+  printf '%s\n' "$inst" | grep -qx "package:$pkg" || return 0
+  printf '%s' "$dump" | grep -q 'suspended=true' && return 0
+  printf '%s' "$dump" | grep -q 'hidden=true' && return 0
+  return 1
+}
+
+# лестница: disable-user -> suspend -> hide -> uninstall --user 0
+block_package() {
+  local pkg="$1" out mode
+  for mode in disable-user suspend hide uninstall; do
+    case "$mode" in
+      disable-user) out=$(sh_ "pm disable-user --user 0 $pkg") ;;
+      suspend)      out=$(sh_ "pm suspend --user 0 $pkg") ;;
+      hide)         out=$(sh_ "pm hide $pkg") ;;
+      uninstall)    out=$(sh_ "pm uninstall --user 0 $pkg") ;;
+    esac
+    if is_blocked "$pkg"; then
+      BLOCKED_BY="$mode"
+      return 0
+    fi
+    dim "    $mode: $(printf '%s' "$out" | head -1)"
+  done
+  BLOCKED_BY=""
+  return 1
+}
+
+unblock_package() {
+  local pkg="$1"
+  sh_ "pm unsuspend --user 0 $pkg" >/dev/null 2>&1
+  sh_ "pm unhide $pkg" >/dev/null 2>&1
+  sh_ "pm enable $pkg" >/dev/null 2>&1
+  sh_ "cmd package install-existing $pkg" >/dev/null 2>&1
+  ! is_blocked "$pkg"
+}
+
 classify() {
   case "$1" in
     *speechassist*|*breeno*|*voiceassist*) echo "voice" ;;
@@ -113,16 +156,14 @@ printf '%s' "$cur" | grep -q 'com\.google' && ok "Google назначен пом
 if [ "$RESTORE" -eq 1 ]; then
   step "Возвращаю фирменные ассистенты"
   for pkg in "${CANDIDATES[@]}"; do
-    out=$(sh_ "pm enable $pkg")
-    if printf '%s' "$out" | grep -qEi 'Error|Exception|Unknown package'; then
-      out=$(sh_ "cmd package install-existing $pkg")
-    fi
-    if printf '%s' "$out" | grep -qEi 'Unknown package|not found'; then
+    if ! printf '%s\n' "$installed" | grep -qx "package:$pkg"; then
       dim "$pkg: на этой сборке нет — пропускаю"
-    elif printf '%s' "$out" | grep -qEi 'Error|Exception'; then
-      warn "$pkg: $out"
+      continue
+    fi
+    if unblock_package "$pkg"; then
+      ok "$pkg включён (снял suspend/hidden/enable)"
     else
-      ok "$pkg включён"
+      warn "$pkg не удалось вернуть — проверь вручную: pm enable $pkg"
     fi
   done
   dim "Проверь: долгое нажатие снова откроет Breeno."
@@ -158,41 +199,20 @@ fi
 
 FAILED=()
 for pkg in "${TARGETS[@]}"; do
-  out=$(sh_ "pm disable-user --user 0 $pkg")
-  if printf '%s' "$out" | grep -q 'new state: disabled'; then
-    ok "$pkg отключён"
+  dim "$pkg:"
+  if block_package "$pkg"; then
+    ok "$pkg заблокирован (способ: $BLOCKED_BY)"
   else
-    warn "$pkg не поддался: $out"
+    warn "$pkg не поддался ни одному способу"
     FAILED+=("$pkg")
   fi
 done
 
-# второй проход по защищённым
-if [ ${#FAILED[@]} -gt 0 ] && [ "$UNINSTALL" -eq 1 ]; then
-  step "Повторяю через uninstall --user 0"
-  STILL=()
-  for pkg in "${FAILED[@]}"; do
-    out=$(sh_ "pm uninstall --user 0 $pkg")
-    if printf '%s' "$out" | grep -q 'Success'; then
-      ok "$pkg скрыт для пользователя (вернуть: --restore)"
-    else
-      warn "$pkg: $out"
-      STILL+=("$pkg")
-    fi
-  done
-  FAILED=("${STILL[@]:-}")
-  [ ${#FAILED[@]} -eq 1 ] && [ -z "${FAILED[0]:-}" ] && FAILED=()
-fi
-
 step "Проверяю результат"
-disabled_after=$(sh_ 'pm list packages -d')
-installed_after=$(sh_ 'pm list packages --user 0')
 REALLY_FAILED=()
 for pkg in "${TARGETS[@]}"; do
-  if printf '%s\n' "$disabled_after" | grep -qx "package:$pkg"; then
-    ok "$pkg отключён"
-  elif ! printf '%s\n' "$installed_after" | grep -qx "package:$pkg"; then
-    ok "$pkg скрыт для пользователя"
+  if is_blocked "$pkg"; then
+    ok "$pkg заблокирован"
   else
     warn "$pkg всё ещё активен"
     REALLY_FAILED+=("$pkg")
@@ -211,7 +231,7 @@ if [ ${#REALLY_FAILED[@]} -eq 0 ]; then
   dim "Если кнопка теперь открывает меню выключения, а не Gemini — прогони scripts/oneclick.sh"
 else
   warn "Прошивка не дала снять: ${REALLY_FAILED[*]}"
-  dim "Попробуй жёстче: bash scripts/breeno-off.sh --uninstall"
-  dim "Если и это не сработает — Activity Launcher (assistantguidedialog) или root."
+  dim "Перебрал disable-user, suspend, hide и uninstall — прошивка не дала."
+  dim "Дальше только Activity Launcher (assistantguidedialog) или root."
 fi
 dim "Вернуть как было: bash scripts/breeno-off.sh --restore"

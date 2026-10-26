@@ -628,12 +628,12 @@ async function listVendorAssistants(serial) {
   const installedRes = await shell(serial, 'pm list packages --user 0', { timeout: 30000 });
   const disabledRes = await shell(serial, 'pm list packages -d', { timeout: 30000 });
   const installed = parsePackageList(installedRes.stdout || '');
-  const allRes = installed.size ? installedRes : await shell(serial, 'pm list packages', { timeout: 30000 });
-  const universe = parsePackageList(allRes.stdout || '');
+  const fallback = installed.size ? installedRes : await shell(serial, 'pm list packages', { timeout: 30000 });
+  const universe = parsePackageList(fallback.stdout || '');
   const disabled = parsePackageList(disabledRes.stdout || '');
   const all = [...universe].filter((p) => VENDOR_ASSISTANT_RE.test(p));
   return {
-    ok: allRes.ok,
+    ok: fallback.ok,
     packages: all
       .map((pkg) => {
         const { role, label, risk } = classifyVendorPackage(pkg);
@@ -651,88 +651,136 @@ async function listVendorAssistants(serial) {
   };
 }
 
-async function readDisabledSet(serial) {
-  const r = await shell(serial, 'pm list packages -d', { timeout: 30000 });
-  return parsePackageList(r.stdout || '');
-}
+/**
+ * Лестница стратегий блокировки. OPPO защищает часть пакетов от `disable-user`
+ * (ответ «new state: default» — отказ) и от `uninstall` (DELETE_FAILED_INTERNAL_ERROR),
+ * но нередко пропускает `hide` или `suspend`. Все стратегии обратимы, root не нужен.
+ */
+const BLOCK_STRATEGIES = [
+  { name: 'disable-user', cmd: (p) => `pm disable-user --user 0 ${p}`, okRe: /new state: disabled/i },
+  { name: 'suspend', cmd: (p) => `pm suspend --user 0 ${p}`, okRe: /new suspended state: true|suspended/i },
+  { name: 'hide', cmd: (p) => `pm hide ${p}`, okRe: /new state: (hidden|disabled)/i },
+  { name: 'uninstall-user', cmd: (p) => `pm uninstall --user 0 ${p}`, okRe: /Success/i },
+  // на Android 16 shell-у запрещено: SecurityException "Shell cannot change component state"
+  { name: 'disable', cmd: (p) => `pm disable --user 0 ${p}`, okRe: /new state: disabled/i },
+];
+
+/** Причины отказа, которые встречались на реальных устройствах — для понятных сообщений. */
+const BLOCK_FAILURE_HINTS = [
+  { re: /requires: android\.permission\.MANAGE_USERS/i, text: 'shell-у запрещено (нужен MANAGE_USERS) — только root' },
+  { re: /Shell cannot change component state/i, text: 'shell не может менять состояние этого пакета' },
+  { re: /DELETE_FAILED_INTERNAL_ERROR/i, text: 'прошивка запрещает uninstall --user 0' },
+  { re: /new state: default/i, text: 'прошивка проигнорировала команду (состояние не изменилось)' },
+];
+
+const UNBLOCK_COMMANDS = [
+  (p) => `pm unsuspend --user 0 ${p}`,
+  (p) => `pm unhide ${p}`,
+  (p) => `pm enable ${p}`,
+  (p) => `cmd package install-existing ${p}`,
+];
 
 /**
- * Отключает пакеты для текущего пользователя.
- *
- * `pm disable-user` не требует root и не удаляет приложение. Но часть пакетов ColorOS
- * защищает: команда отвечает «new state: default» и состояние не меняется. Для таких
- * есть второй, более сильный режим — `pm uninstall --user 0` (пакет скрывается только
- * у пользователя 0, возвращается через `cmd package install-existing`).
+ * Смотрит фактическое состояние пакета: текст ответа врёт, а состояние — нет.
  */
+async function inspectPackageState(serial, pkg) {
+  const [disabledRes, installedRes, dumpRes] = await Promise.all([
+    shell(serial, 'pm list packages -d', { timeout: 25000 }),
+    shell(serial, 'pm list packages --user 0', { timeout: 25000 }),
+    shell(serial, `dumpsys package ${pkg}`, { timeout: 25000 }),
+  ]);
+  const disabled = parsePackageList(disabledRes.stdout || '').has(pkg);
+  const installedForUser = parsePackageList(installedRes.stdout || '').has(pkg);
+  const dump = dumpRes.stdout || '';
+  const suspended = /suspended=true/i.test(dump);
+  const hidden = /hidden=true/i.test(dump);
+  const evidence = [];
+  if (disabled) evidence.push('есть в pm list packages -d');
+  if (!installedForUser) evidence.push('не установлен для пользователя 0');
+  if (suspended) evidence.push('suspended=true в dumpsys');
+  if (hidden) evidence.push('hidden=true в dumpsys');
+  return {
+    blocked: disabled || !installedForUser || suspended || hidden,
+    disabled,
+    installedForUser,
+    suspended,
+    hidden,
+    evidence,
+  };
+}
+
+/** Перебирает стратегии блокировки, проверяя результат состоянием. */
 async function disablePackages(serial, packages, options = {}) {
-  const steps = [];
   const targets = (Array.isArray(packages) ? packages : [packages])
     .filter((p) => typeof p === 'string' && /^[a-zA-Z0-9_.]+$/.test(p))
     .filter((p) => !isDeniedVendorPackage(p));
 
+  const strategies = options.strategies
+    ? BLOCK_STRATEGIES.filter((st) => options.strategies.includes(st.name))
+    : BLOCK_STRATEGIES;
+
+  const steps = [];
+  const results = [];
+
   for (const pkg of targets) {
-    const r = await shell(serial, `pm disable-user --user 0 ${pkg}`, { timeout: 20000 });
-    const out = r.stdout + r.stderr;
-    steps.push({
-      package: pkg,
-      mode: 'disable-user',
-      ok: r.ok && /new state: disabled/i.test(out),
-      out: clip(out, 600),
-    });
-  }
-
-  let disabledNow = await readDisabledSet(serial);
-  let verified = targets.filter((p) => disabledNow.has(p));
-  let missing = targets.filter((p) => !disabledNow.has(p));
-
-  // второй проход: для тех, кто не поддался disable-user
-  if (options.uninstallForCurrentUser && missing.length) {
-    const retry = [];
-    for (const pkg of missing) {
-      const r = await shell(serial, `pm uninstall --user 0 ${pkg}`, { timeout: 25000 });
-      const out = r.stdout + r.stderr;
-      const ok = r.ok && /Success/i.test(out);
-      retry.push({ package: pkg, mode: 'uninstall-user', ok, out: clip(out, 600) });
+    const attempts = [];
+    let blocked = false;
+    for (const strategy of strategies) {
+      if (blocked) break;
+      const r = await shell(serial, strategy.cmd(pkg), { timeout: 25000 });
+      const out = (r.stdout + r.stderr).trim();
+      const state = await inspectPackageState(serial, pkg);
+      attempts.push({
+        package: pkg,
+        mode: strategy.name,
+        cmd: strategy.cmd(pkg),
+        saysOk: strategy.okRe.test(out),
+        refuseReason: (BLOCK_FAILURE_HINTS.find((h) => h.re.test(out)) || {}).text || null,
+        blocked: state.blocked,
+        evidence: state.evidence,
+        out: clip(out, 400),
+      });
+      blocked = state.blocked;
     }
-    steps.push(...retry);
-    disabledNow = await readDisabledSet(serial);
-    const stillInstalled = new Set(
-      [...parsePackageList((await shell(serial, 'pm list packages --user 0', { timeout: 30000 })).stdout || '')],
-    );
-    verified = targets.filter(
-      (p) => disabledNow.has(p) || (retry.some((r) => r.package === p && r.ok) && !stillInstalled.has(p)),
-    );
-    missing = targets.filter((p) => !verified.includes(p));
+    results.push({
+      package: pkg,
+      blocked,
+      attempts,
+      workedMode: (attempts.find((a) => a.blocked) || {}).mode || null,
+    });
+    steps.push(...attempts);
   }
 
-  return {
-    ok: missing.length === 0,
-    steps,
-    verified,
-    failed: missing,
-    requested: targets,
-  };
+  const verified = results.filter((r) => r.blocked).map((r) => r.package);
+  const failed = results.filter((r) => !r.blocked).map((r) => r.package);
+  return { ok: failed.length === 0, verified, failed, requested: targets, steps, results };
 }
 
-/** Включает пакеты обратно. */
+/** Включает пакеты обратно: пробует все способы разблокировки подряд. */
 async function enablePackages(serial, packages) {
-  const steps = [];
   const targets = (Array.isArray(packages) ? packages : [packages]).filter(
     (p) => typeof p === 'string' && /^[a-zA-Z0-9_.]+$/.test(p),
   );
+  const steps = [];
+  const stillBlocked = [];
+
   for (const pkg of targets) {
-    let r = await shell(serial, `pm enable ${pkg}`, { timeout: 20000 });
-    let out = r.stdout + r.stderr;
-    if (/Error|Exception/i.test(out)) {
-      // если пакет был удалён для пользователя, а не отключён
-      r = await shell(serial, `cmd package install-existing ${pkg}`, { timeout: 25000 });
-      out = r.stdout + r.stderr;
+    let restored = false;
+    for (const build of UNBLOCK_COMMANDS) {
+      const cmd = build(pkg);
+      const r = await shell(serial, cmd, { timeout: 25000 });
+      const out = (r.stdout + r.stderr).trim();
+      steps.push({ package: pkg, cmd, ok: !/Error|Exception|Failure/i.test(out), out: clip(out, 300) });
+      const state = await inspectPackageState(serial, pkg);
+      if (!state.blocked) {
+        restored = true;
+        break;
+      }
     }
-    steps.push({ package: pkg, ok: r.ok && !/Error|Exception/i.test(out), out: clip(out, 600) });
+    if (!restored) stillBlocked.push(pkg);
   }
-  const after = await shell(serial, 'pm list packages -d', { timeout: 30000 });
-  const disabledNow = parsePackageList(after.stdout || '');
-  return { ok: targets.every((p) => !disabledNow.has(p)), steps, stillDisabled: targets.filter((p) => disabledNow.has(p)) };
+
+  return { ok: stillBlocked.length === 0, steps, stillBlocked };
 }
 
 // ---------------------------------------------------------------------------
@@ -773,6 +821,9 @@ module.exports = {
   listVendorAssistants,
   disablePackages,
   enablePackages,
+  inspectPackageState,
+  BLOCK_STRATEGIES,
+  BLOCK_FAILURE_HINTS,
   pair,
   connect,
   enableTcpip,
