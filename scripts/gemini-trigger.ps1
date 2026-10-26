@@ -200,6 +200,23 @@ function Save-Backup {
   }
 }
 
+function Get-ReadLogsState {
+  # В Android 13+ appops понимает строку операции "android:read_logs",
+  # а привычное имя READ_LOGS даёт "Error: Unknown operation string".
+  $first = Sh "appops get $Pkg android:read_logs"
+  if ($first -match 'Error|Unknown') { return (Sh "appops get $Pkg READ_LOGS") }
+  return $first
+}
+
+function Set-ReadLogsAllowed {
+  foreach ($op in @('android:read_logs', 'READ_LOGS')) {
+    $null = Sh "appops set $Pkg $op allow"
+    $check = Sh "appops get $Pkg $op"
+    if ($check -match ': allow') { return $true }
+  }
+  return $false
+}
+
 function Show-State {
   Step "Состояние ColorGoogle"
   $path = Sh "pm path $Pkg"
@@ -208,8 +225,8 @@ function Show-State {
     return
   }
   Dim ("apk: " + (($path -split "`r?`n" | Where-Object { $_ })[0] -replace '^package:', ''))
-  $readLogs = Sh "appops get $Pkg READ_LOGS"
-  if ($readLogs -match 'READ_LOGS:\s*allow') { Ok "READ_LOGS: разрешён" }
+  $readLogs = Get-ReadLogsState
+  if ($readLogs -match ': allow') { Ok "READ_LOGS: разрешён (appops)" }
   else { Warn "READ_LOGS: $readLogs" }
 
   $raw = Sh "content call --uri content://$Pkg.desktopsearch --method status"
@@ -322,10 +339,11 @@ Step "Разрешения и роль помощника"
 # READ_LOGS — не runtime-разрешение: `pm grant` из shell на Android 13+ падает с
 # SecurityException (GRANT_RUNTIME_PERMISSIONS). Рабочий путь — app-op, им shell управляет.
 $null = Sh "pm grant $Pkg android.permission.READ_LOGS"
-$null = Sh "appops set $Pkg READ_LOGS allow"
-$readLogs = Sh "appops get $Pkg READ_LOGS"
-if ($readLogs -match 'READ_LOGS:\s*allow') { Ok "READ_LOGS разрешён (appops)" }
-else { Warn "READ_LOGS не применился: $readLogs" }
+if (Set-ReadLogsAllowed) { Ok "READ_LOGS разрешён (appops)" }
+else {
+  Warn "READ_LOGS включить не удалось — не критично для кнопки (агент работает как shell, у него лог есть)"
+  Dim ("состояние: " + (Get-ReadLogsState))
+}
 
 Sh "settings --user 0 put secure assistant $GoogleService" | Out-Null
 Sh "settings --user 0 put secure voice_interaction_service $GoogleService" | Out-Null
