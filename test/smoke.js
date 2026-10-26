@@ -426,6 +426,7 @@ test('breeno-gesture: пробует роль ASSISTANT и умеет верну
   // пойманный пакет гасим и проверяем, не падает ли жест на роль ASSISTANT
   assert.ok(src.includes('pm disable-user --user 0') || src.includes('pm disable-user --user 0 ', ), 'пакет гасится');
   assert.ok(src.includes('pm suspend --user 0'), 'последний шаг — suspend, а не uninstall');
+  assert.ok(src.includes('$ScriptVersion'), 'версия печатается — видно устаревшую копию');
   assert.ok(src.includes('Test-PressForAssistant'), 'каждый шаг проверяется нажатием');
   // левая панель включается теми же ключами, что возвращают Breeno
   assert.ok(src.includes('Remove-LeftPanel'), 'панель должна сниматься после прогона');

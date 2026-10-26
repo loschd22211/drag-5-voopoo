@@ -30,6 +30,7 @@ param(
   [switch]$Sweep
 )
 
+$ScriptVersion = "2026-10-27.9"
 $ErrorActionPreference = "Continue"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -389,6 +390,7 @@ $model = Sh 'getprop ro.product.model'
 $android = Sh 'getprop ro.build.version.release'
 $rom = Sh 'getprop ro.build.version.oplusrom'
 Say-Step "Телефон"
+Say-Dim "скрипт:   $ScriptVersion"
 Say-Dim "модель:   $model"
 Say-Dim "Android:  $android"
 Say-Dim "прошивка: $rom"
