@@ -159,7 +159,7 @@ test('ранжирование: реальный список с Ace 5 (ColorOS 
 });
 
 test('PowerShell-скрипты сохранены в UTF-8 с BOM (иначе PS 5.1 ломает кириллицу)', () => {
-  const files = ['oneclick.ps1', 'adb-gemini.ps1', 'breeno-off.ps1', 'gemini-trigger.ps1', 'debloat-market.ps1', 'power-key-reset.ps1'];
+  const files = ['oneclick.ps1', 'adb-gemini.ps1', 'breeno-off.ps1', 'gemini-trigger.ps1', 'debloat-market.ps1', 'power-key-reset.ps1', 'gemini-one-click.ps1'];
   for (const name of files) {
     const buf = fs.readFileSync(path.join(__dirname, '..', 'scripts', name));
     assert.ok(
@@ -310,6 +310,22 @@ test('откат кнопки: удаление с лестницей спосо
   assert.ok(src.includes('speech_assist_power_wakeup 1'), 'Breeno должен возвращаться на кнопку');
   assert.ok(src.includes('assist_gesture_enabled 0'), 'жест помощника надо выключать обратно');
   assert.ok(src.includes("'assistant.txt'"), 'assistant возвращается из бэкапа');
+});
+
+test('одноклик: сам находит помощника, снимает Breeno и проверяет кнопку', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'gemini-one-click.ps1'), 'utf8');
+  // компонент помощника ищем в системе, а не пишем строку наугад
+  assert.ok(src.includes('query-services -a android.service.voice.VoiceInteractionService'), 'нужен поиск VoiceInteractionService');
+  assert.ok(src.includes('settings --user 0 put secure assistant'), 'помощника надо назначать');
+  assert.ok(src.includes('speech_assist_power_wakeup 0'), 'Breeno должен сниматься с кнопки');
+  assert.ok(src.includes('assist_gesture_enabled 1'), 'жест удержания питания надо включать');
+  assert.ok(src.includes('KEYCODE_ASSIST'), 'нужна самопроверка нажатием');
+  assert.ok(src.includes('mCurrentFocus'), 'вердикт должен читаться с экрана');
+  // на ColorOS shell не имеет права менять appops — не пытаемся
+  assert.ok(!/cmd appops set/.test(src), 'appops из shell на этой прошивке запрещён');
+  assert.ok(!/^\s*function\s+Kill\b/m.test(src), 'нельзя объявлять функцию Kill');
+  // VPN: без него Gemini упирается в регион
+  assert.ok(src.includes('always_on_vpn_app'), 'постоянный VPN должен настраиваться');
 });
 
 (async () => {

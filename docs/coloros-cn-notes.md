@@ -456,6 +456,34 @@ Gemini из Play Маркета → в приложении Google выбрат�
 
 ---
 
+## 2.999. Что в итоге сработало на PKG110 (ColorOS 16.1)
+
+Проверено на живом устройстве, сверху вниз:
+
+| Шаг | Команда/ключ | Итог |
+| --- | --- | --- |
+| Google назначен помощником | `settings --user 0 put secure assistant …GsaVoiceInteractionService` | окно `googlequicksearchbox` поднимается |
+| Breeno снят с кнопки | `settings put secure speech_assist_power_wakeup 0` | иначе кнопку забирает `com.heytap.speechassist` |
+| жест включён | `assist_gesture_enabled 1`, `assist_gesture_wake_enabled 1` | удержание питания поднимает robin-активити |
+| сеть под помощником | `always_on_vpn_app com.happproxy` + whitelist | без VPN Gemini отдаёт «ошибку 1060» (регион) |
+| долгое нажатие полосы | `assist_long_press_home_enabled 1` | запасной вызов, работает даже когда кнопка не отдаётся |
+
+Что **не** работает из shell на этой прошивке и не нужно пытаться:
+
+- `appops set …` любых операций → `uid 2000 does not have MANAGE_APP_OPS_MODES`;
+- `pm grant … READ_LOGS` → `Neither user 2000 nor current process has android.permission.GRANT_RUNTIME_PERMISSIONS`;
+- поэтому ColorGoogle (единственный перехватчик питания без root) здесь не настраивается.
+
+Проверка «открылось ли» надёжнее всего по фокусу окна:
+
+```
+adb shell dumpsys window   → искать mCurrentFocus=Window{… com.google.android.googlequicksearchbox}
+```
+
+Всё перечисленное делает один скрипт: `scripts/gemini-one-click.ps1` (откат — `-Restore`).
+
+---
+
 ## 3. Что не заведётся даже при рабочей кнопке
 
 - **«Окей, Google» / Voice Match.** На CN-сборках часто отсутствует системная библиотека,
