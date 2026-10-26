@@ -372,6 +372,18 @@ test('в строках нет $переменная: — PowerShell падае�
   assert.ok(bad.length === 0, 'найдено: ' + bad.join(', '));
 });
 
+test('lockscreen-player: включает карточку плеера и объясняет, что мешает', () => {
+  const file = path.join(__dirname, '..', 'scripts', 'lockscreen-player.ps1');
+  assert.ok(fs.existsSync(file), 'скрипт должен существовать');
+  const src = fs.readFileSync(file, 'utf8');
+  assert.ok(src.includes('media_controls_lock_screen 1'), 'ключ карточки плеера включается сам');
+  assert.ok(src.includes('lockscreen_show_controls 1'), 'и показ элементов управления');
+  assert.ok(src.includes('dumpsys media_session'), 'нужно смотреть, какое приложение реально играет');
+  assert.ok(src.includes('dumpsys notification --noredact'), 'и важность канала уведомления');
+  assert.ok(src.includes('важность'), 'вердикт должен объяснять про важность канала');
+  assert.ok(src.includes('нельзя сделать из adb'), 'нельзя обещать то, что из shell не меняется');
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {
