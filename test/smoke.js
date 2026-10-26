@@ -282,11 +282,13 @@ test('скрипт деблоата: имена функций не конфли
 test('READ_LOGS выдаётся app-op, а не только pm grant', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'gemini-trigger.ps1'), 'utf8');
   // pm grant READ_LOGS на Android 13+ падает: SecurityException GRANT_RUNTIME_PERMISSIONS
-  // appops в Android 13+ принимает только строку операции; на имя READ_LOGS отвечает
-  // «Error: Unknown operation string» — на этом уже спотыкались
-  assert.ok(src.includes("'android:read_logs'"), 'нужна строка операции android:read_logs');
-  assert.ok(src.includes('appops set $Pkg $op allow'), 'нужен app-op как основной путь выдачи');
-  assert.ok(!/appops set \$Pkg READ_LOGS allow/.test(src), 'имя READ_LOGS в appops не работает');
+  // «Error: Unknown operation string» приходит на разные написания операции,
+  // поэтому нужен перебор: cmd appops с именем, затем appops со строкой операции
+  assert.ok(src.includes("cmd appops set $Pkg READ_LOGS allow"), 'нужен вариант через cmd appops');
+  assert.ok(src.includes("appops set $Pkg android:read_logs allow"), 'нужна строка операции android:read_logs');
+  assert.ok(src.includes('foreach ($f in $forms)'), 'варианты надо перебирать, а не полагаться на один');
+  // stderr adb в PowerShell 5.1 превращается в NativeCommandError и мусорит вывод
+  assert.ok(src.includes('& cmd /c $line'), 'adb надо звать через cmd /c, иначе шум в консоли');
   assert.ok(src.includes('[switch]$Status'), 'нужен режим -Status для диагностики без изменений');
 });
 

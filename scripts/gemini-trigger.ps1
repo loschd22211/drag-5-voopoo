@@ -49,7 +49,11 @@ function Dim($t)  { Write-Host "     $t" -ForegroundColor DarkGray }
 function Die($t)  { Err $t; Write-Host ""; Read-Host "Enter — закрыть"; exit 1 }
 
 function Sh($cmd) {
-  (& $script:AdbBin "-s" $script:Serial "shell" $cmd 2>&1 | Out-String).Trim()
+  # Через cmd /c: в PowerShell 5.1 stderr нативной программы превращается в
+  # NativeCommandError и засоряет вывод (и $Error) — а нам нужен просто текст.
+  $line = '"' + $script:AdbBin + '" -s ' + $script:Serial + ' shell ' + $cmd + ' 2>&1'
+  $out = & cmd /c $line | Out-String
+  return $out.Trim()
 }
 
 # ------------------------------------------------------------------ adb
@@ -201,18 +205,28 @@ function Save-Backup {
 }
 
 function Get-ReadLogsState {
-  # В Android 13+ appops понимает строку операции "android:read_logs",
-  # а привычное имя READ_LOGS даёт "Error: Unknown operation string".
-  $first = Sh "appops get $Pkg android:read_logs"
-  if ($first -match 'Error|Unknown') { return (Sh "appops get $Pkg READ_LOGS") }
-  return $first
+  $op = $script:ReadLogsOp
+  if (-not $op) { $op = 'android:read_logs' }
+  $out = Sh "appops get $Pkg $op"
+  if ($out -match 'Unknown|Error') { $out = Sh "cmd appops get $Pkg READ_LOGS" }
+  return $out
 }
 
 function Set-ReadLogsAllowed {
-  foreach ($op in @('android:read_logs', 'READ_LOGS')) {
-    $null = Sh "appops set $Pkg $op allow"
-    $check = Sh "appops get $Pkg $op"
-    if ($check -match ': allow') { return $true }
+  # На разных сборках ColorOS операция называется по-разному, а `appops` и
+  # `cmd appops` разбирают строку по-своему. Пробуем все варианты по очереди.
+  $forms = @(
+    @{ Set = "cmd appops set $Pkg READ_LOGS allow";   Get = "cmd appops get $Pkg READ_LOGS" },
+    @{ Set = "appops set $Pkg android:read_logs allow"; Get = "appops get $Pkg android:read_logs" },
+    @{ Set = "appops set $Pkg READ_LOGS allow";         Get = "appops get $Pkg READ_LOGS" }
+  )
+  foreach ($f in $forms) {
+    $null = Sh $f.Set
+    $check = Sh $f.Get
+    if ($check -match 'allow' -and $check -notmatch 'Unknown|Error') {
+      $script:ReadLogsOp = ($f.Set -replace '^\S+ appops set \S+ ', '' -replace ' allow$', '')
+      return $true
+    }
   }
   return $false
 }
@@ -224,7 +238,8 @@ function Show-State {
     Warn "приложение не установлено"
     return
   }
-  Dim ("apk: " + (($path -split "`r?`n" | Where-Object { $_ })[0] -replace '^package:', ''))
+  $apkLine = ($path -split "`n" | Where-Object { $_ -like 'package:*' } | Select-Object -First 1)
+  if ($apkLine) { Dim ("apk: " + ($apkLine -replace '^\s*package:', '')) }
   $readLogs = Get-ReadLogsState
   if ($readLogs -match ': allow') { Ok "READ_LOGS: разрешён (appops)" }
   else { Warn "READ_LOGS: $readLogs" }
