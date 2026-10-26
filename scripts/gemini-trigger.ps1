@@ -288,6 +288,10 @@ function Show-State {
   if ($raw -match 'agentConnected=true') { Ok "агент подключён" }
   else { Warn "агент не запущен (нужен шаг активации)" }
 
+  $powerWake = Sh 'settings get secure speech_assist_power_wakeup'
+  $assistGesture = Sh 'settings get secure assist_gesture_enabled'
+  Dim "speech_assist_power_wakeup: $powerWake   (1 = кнопку забирает Breeno)"
+  Dim "assist_gesture_enabled: $assistGesture   (1 = удержание питания открывает помощника)"
   $agentPid = Sh 'pidof colorgoogle-search'
   if ($agentPid) { Dim "процесс агента: $agentPid" } else { Dim "процесса colorgoogle-search нет" }
   if ($raw -match 'lifecycle=([A-Z]+)') { Dim "lifecycle: $($Matches[1])" }
@@ -373,12 +377,29 @@ else {
   Dim ("состояние: " + (Get-ReadLogsState))
 }
 
-Sh "settings --user 0 put secure assistant $GoogleService" | Out-Null
-Sh "settings --user 0 put secure voice_interaction_service $GoogleService" | Out-Null
-$curAss = Sh 'settings --user 0 get secure assistant'
-$curVoi = Sh 'settings --user 0 get secure voice_interaction_service'
-if ($curAss -match 'com\.google' -or $curVoi -match 'com\.google') { Ok "Google назначен помощником" }
-else { Warn "прошивка не приняла assistant — кнопка может не сработать: $curAss / $curVoi" }
+# Без Google-приложения строчка assistant — просто текст: открывать по кнопке некому.
+$gsaPath = Sh 'pm path com.google.android.googlequicksearchbox'
+$bardPath = Sh 'pm path com.google.android.apps.bard'
+$googleHere = ($gsaPath -match 'package:')
+if ($googleHere) {
+  Ok "Google (googlequicksearchbox) на месте"
+  Sh "settings --user 0 put secure assistant $GoogleService" | Out-Null
+  Sh "settings --user 0 put secure voice_interaction_service $GoogleService" | Out-Null
+  $curAss = Sh 'settings --user 0 get secure assistant'
+  if ($curAss -match 'com\.google') { Ok "Google назначен помощником" }
+  else { Warn "прошивка не приняла assistant: $curAss" }
+
+  # AOSP-механизм «удержание кнопки питания открывает помощника»
+  Sh 'settings put secure assist_gesture_enabled 1' | Out-Null
+  Sh 'settings put secure assist_gesture_wake_enabled 1' | Out-Null
+  Ok "жест «удержание питания → помощник» включён"
+} else {
+  Warn "Google-приложения на телефоне нет — помощник по кнопке открывать некому"
+  Dim "Сначала включи Настройки -> Google (базовые сервисы), затем поставь Google и Gemini"
+  Dim "из Play Маркета. Строчка assistant без приложения ничего не значит."
+}
+if ($bardPath -match 'package:') { Ok "Gemini (apps.bard) установлен" }
+else { Dim "отдельного приложения Gemini нет — не критично, помощник живёт внутри Google" }
 
 Sh "appops set $Pkg SYSTEM_ALERT_WINDOW allow" | Out-Null
 Ok "«Поверх других приложений» разрешено"
