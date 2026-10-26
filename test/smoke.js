@@ -434,21 +434,22 @@ test('breeno-gesture: пробует роль ASSISTANT и умеет верну
   assert.ok(src.includes('$ScriptVersion'), 'версия печатается');
 });
 
-test('left-panel: гасит только найденную страницу, а не всё подряд', () => {
+test('left-panel: сам листает, читает разметку и не врёт про результат', () => {
   const file = path.join(__dirname, '..', 'scripts', 'left-panel.ps1');
   assert.ok(fs.existsSync(file), 'скрипт должен существовать');
   const src = fs.readFileSync(file, 'utf8');
-  // страницу определяем по разметке экрана, а не по угадыванию имени
   assert.ok(src.includes('uiautomator dump'), 'снимаем разметку экрана');
-  assert.ok(src.includes('dumpsys SurfaceFlinger --list'), 'и слои экрана');
+  assert.ok(src.includes('input swipe'), 'сам листает на левую страницу');
+  assert.ok(src.includes('[\\u4e00-\\u9fff]'), 'ищет китайские надписи');
   assert.ok(src.includes('$Allowed'), 'есть белый список того, что можно гасить');
   assert.ok(src.includes('[switch]$Restore'), 'нужен откат');
   assert.ok(src.includes('[switch]$Find'), 'нужен режим только посмотреть');
-  // именно это выключило 154 пакета и снесло обои — такого быть не должно
+  // ранее скрипт наврал: пакет ловился подстрокой и «убрано» печаталось всегда
+  assert.ok(src.includes('package="'), 'пакет ищется точным именем в разметке');
+  assert.ok(!src.includes('SurfaceFlinger'), 'по слоям больше не угадываем');
   assert.ok(!src.includes('Выключить всё из списка'), 'нельзя предлагать выключить всё');
   assert.ok(!/foreach \(\$p in \$cn\)/.test(src), 'нельзя перебирать все китайские пакеты');
   assert.ok(!src.includes('pm uninstall'), 'удалять пакеты нельзя');
-  assert.ok(src.includes('key_com_coloros_assistantscreen'), 'ключи левой страницы тоже снимаются');
 });
 
 test('restore-cn: возвращает всё выключенное одной командой', () => {
