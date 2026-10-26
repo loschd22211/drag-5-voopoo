@@ -458,9 +458,13 @@ suspended — в списке `-d` он не появляется, хотя ег
 целиком.
 
 ```
-# зажать полосу жестов, затем сразу:
-adb shell dumpsys activity activities | Select-String -Pattern "mResumedActivity"
+# зажать полосу жестов, дождаться «страница недоступна», затем:
+adb shell dumpsys window | Select-String -Pattern "mCurrentFocus|mFocusedApp"
 ```
+
+`dumpsys activity activities | Select-String "mResumedActivity"` на Android 16 даёт
+**пусто**: поле переименовано (`topResumedActivity`), и `Select-String` не находит
+строку. Для «что сейчас на экране» надёжнее `dumpsys window` с `mCurrentFocus`.
 
 ---
 
