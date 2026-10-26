@@ -109,54 +109,82 @@ adb shell settings put secure assistant com.google.android.googlequicksearchbox/
 
 проходит, `settings get secure assistant` показывает Google — **а долгое нажатие всё равно
 открывает Breeno**. Причина: Breeno ставит собственный обработчик клавиши, который
-работает поверх роли «цифрового помощника». Пока его пакет включён, кнопка принадлежит ему.
+работает поверх роли «цифрового помощника». Пока его пакеты включены, кнопка принадлежит ему.
 
-Лечится отключением пакета для текущего пользователя — **без root и обратимо**:
+### На ColorOS 16 пакета `com.oplus.breeno` нет
+
+Breeno разложен на части. Реальный список с OnePlus Ace 5 (PKG110, Android 16, ColorOS 16 CN):
+
+| Пакет | Что это | Отключается через `disable-user` | Риск |
+| --- | --- | --- | --- |
+| `com.heytap.speechassist` | голосовой ассистент (сам Breeno) | да → `new state: disabled-user` | низкий |
+| `com.coloros.assistantscreen` | экран ассистента Breeno | **нет** → `new state: default` | низкий |
+| `com.oplus.aiunit` | AI-движок OPPO | **нет** → `new state: default` | средний: им пользуются другие функции |
+| `com.aiunit.aon` | always-on часть AI-движка | да | средний |
+
+Найти актуальные имена на своём устройстве:
 
 ```bash
-adb shell pm list packages | grep -Ei 'breeno|voiceassist|speechassist|assistantscreen|aiunit'
-adb shell pm disable-user --user 0 com.oplus.breeno      # имя взять из списка выше
+adb shell pm list packages | grep -Ei 'breeno|speechassist|voiceassist|assistantscreen|aiunit'
 ```
 
-Проверить, что отключилось:
+### Порядок действий
+
+1. Снять голосовой пакет — этого обычно достаточно:
+
+   ```bash
+   adb shell pm disable-user --user 0 com.heytap.speechassist
+   adb shell pm list packages -d | grep -i speechassist     # проверить, что отключился
+   ```
+
+2. Если кнопка всё ещё открывает Breeno — снять экран ассистента. Он защищён от
+   `disable-user`, поэтому нужен более сильный режим:
+
+   ```bash
+   adb shell pm uninstall --user 0 com.coloros.assistantscreen
+   ```
+
+   Это **не удаление**: пакет скрывается только для пользователя 0 и возвращается командой
+   `adb shell cmd package install-existing com.coloros.assistantscreen`.
+
+3. AI-движок (`com.oplus.aiunit`, `com.aiunit.aon`) трогать в последнюю очередь: им
+   пользуются галерея, перевод, обработка фото. Отключай только если без этого кнопка
+   не отпускает.
+
+### Важно про `new state: default`
+
+Если `pm disable-user` отвечает `new state: default` — **это не успех**, а отказ: состояние
+пакета не изменилось (проверяется через `pm list packages -d`). Мой первый скрипт считал
+такую строку успехом, из-за чего на реальном телефоне создавалось ложное впечатление, что
+всё снято. Теперь проверка идёт по фактическому состоянию, а не по тексту ответа.
+
+### Готовые скрипты
 
 ```bash
-adb shell pm list packages -d | grep -i breeno            # должен появиться в списке отключённых
-```
-
-Вернуть как было:
-
-```bash
-adb shell pm enable com.oplus.breeno
-# если пакет был не отключён, а удалён для пользователя:
-adb shell cmd package install-existing com.oplus.breeno
-```
-
-Готовые скрипты делают это сами и проверяют результат:
-
-```bash
-bash scripts/breeno-off.sh              # Linux/macOS
-bash scripts/breeno-off.sh --restore    # вернуть
+bash scripts/breeno-off.sh                # голосовой пакет + экран ассистента
+bash scripts/breeno-off.sh --uninstall    # для защищённых — uninstall --user 0
+bash scripts/breeno-off.sh --all          # ещё и AI-движок (осторожно)
+bash scripts/breeno-off.sh --restore      # вернуть всё обратно
 ```
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\breeno-off.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\breeno-off.ps1 -Restore
+# ключи: -Uninstall, -All, -Restore, -Yes
 ```
 
-В веб-интерфейсе это карточка «Фирменный ассистент (Breeno)»: «Снять Breeno» и
-«Вернуть всё обратно».
+В веб-интерфейсе — карточка «Фирменный ассистент (Breeno)»: «Снять Breeno»,
+«Жёстче: скрыть для пользователя», «Вернуть всё обратно».
 
-### Что важно знать
+### Что НЕЛЬЗЯ трогать
 
-- `pm disable-user` не удаляет приложение и не трогает системный раздел — только скрывает
-  пакет для пользователя. Возврат в любой момент.
-- Не отключай `com.oplus.ocs`, `com.oplus.aiunit.engine`, `coloros.ota` — это не ассистенты,
-  а облако/движок/обновления. Скрипты их отсекают автоматически.
-- Если `pm disable-user` отвечает `Error`, значит прошивка защитила пакет: тогда только
-  Activity Launcher / MiCTS / root (шаги 2–4 выше).
-- После перезагрузки отключение сохраняется (в отличие от `settings put secure`), но
-  обновление прошивки может вернуть пакет в строй — скрипт можно просто прогнать снова.
+`com.oplus.ocs`, `coloros.ota`, `com.android.virtualization.terminal` — это не ассистенты
+(облако OPPO, обновления, виртуализация). Скрипты их отсекают автоматически.
+
+### Про обратимость
+
+`pm disable-user` и `pm uninstall --user 0` не трогают системный раздел и не требуют root.
+Возврат — `pm enable` / `cmd package install-existing`. Единственный побочный эффект:
+обновление прошивки может вернуть пакеты в строй — тогда скрипт просто прогоняется снова.
 
 ### Отдельная ловушка: `$` в именах активностей
 

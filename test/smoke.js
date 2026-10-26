@@ -169,27 +169,48 @@ test('PowerShell-скрипты сохранены в UTF-8 с BOM (иначе P
   }
 });
 
-test('фирменные ассистенты: находит Breeno и не трогает com.oplus.ocs', async () => {
+test('фирменные ассистенты: находит части Breeno на ColorOS 16', async () => {
   const res = await adb.listVendorAssistants('MOCK000ACE5');
   assert.equal(res.ok, true);
   const names = res.packages.map((p) => p.package);
-  assert.ok(names.includes('com.oplus.breeno'), 'Breeno должен быть в списке');
+  for (const expected of ['com.heytap.speechassist', 'com.coloros.assistantscreen', 'com.oplus.aiunit']) {
+    assert.ok(names.includes(expected), `${expected} должен быть в списке`);
+  }
   assert.ok(!names.includes('com.oplus.ocs'), 'com.oplus.ocs — не ассистент, его нельзя предлагать');
+  const voice = res.packages.find((p) => p.package === 'com.heytap.speechassist');
+  assert.equal(voice.role, 'voice');
+  assert.equal(voice.risk, 'safe');
+  const engine = res.packages.find((p) => p.package === 'com.oplus.aiunit');
+  assert.equal(engine.risk, 'caution', 'AI-движок должен помечаться как рискованный');
 });
 
-test('Breeno отключается и включается обратно', async () => {
-  const off = await adb.disablePackages('MOCK000ACE5', ['com.oplus.breeno']);
-  assert.equal(off.ok, true, 'не удалось отключить Breeno');
-  assert.deepEqual(off.verified, ['com.oplus.breeno']);
+test('голосовой пакет Breeno отключается и включается обратно', async () => {
+  const off = await adb.disablePackages('MOCK000ACE5', ['com.heytap.speechassist']);
+  assert.equal(off.ok, true, 'не удалось отключить голосовой пакет');
+  assert.deepEqual(off.verified, ['com.heytap.speechassist']);
 
   const listed = await adb.listVendorAssistants('MOCK000ACE5');
-  const breeno = listed.packages.find((p) => p.package === 'com.oplus.breeno');
-  assert.equal(breeno.disabled, true, 'состояние не обновилось');
+  assert.equal(listed.packages.find((p) => p.package === 'com.heytap.speechassist').disabled, true);
 
-  const on = await adb.enablePackages('MOCK000ACE5', ['com.oplus.breeno']);
+  const on = await adb.enablePackages('MOCK000ACE5', ['com.heytap.speechassist']);
   assert.equal(on.ok, true, 'не удалось включить обратно');
   const listed2 = await adb.listVendorAssistants('MOCK000ACE5');
-  assert.equal(listed2.packages.find((p) => p.package === 'com.oplus.breeno').disabled, false);
+  assert.equal(listed2.packages.find((p) => p.package === 'com.heytap.speechassist').disabled, false);
+});
+
+test('защищённый пакет не отключается, но скрывается через uninstall --user 0', async () => {
+  const hard = await adb.disablePackages('MOCK000ACE5', ['com.coloros.assistantscreen']);
+  assert.equal(hard.ok, false, 'disable-user не должен «удаваться» на защищённом пакете');
+  assert.deepEqual(hard.failed, ['com.coloros.assistantscreen']);
+
+  const withUninstall = await adb.disablePackages('MOCK000ACE5', ['com.coloros.assistantscreen'], {
+    uninstallForCurrentUser: true,
+  });
+  assert.equal(withUninstall.ok, true, 'uninstall --user 0 должен сработать');
+  assert.ok(withUninstall.steps.some((st) => st.mode === 'uninstall-user' && st.ok));
+
+  const restored = await adb.enablePackages('MOCK000ACE5', ['com.coloros.assistantscreen']);
+  assert.equal(restored.ok, true, 'пакет должен возвращаться через install-existing');
 });
 
 test('защищённые пакеты не отключаются', async () => {
@@ -198,7 +219,7 @@ test('защищённые пакеты не отключаются', async () =
 });
 
 test('мусорные имена пакетов не попадают в shell', async () => {
-  const res = await adb.disablePackages('MOCK000ACE5', ['com.oplus.breeno; rm -rf /']);
+  const res = await adb.disablePackages('MOCK000ACE5', ['com.heytap.speechassist; rm -rf /']);
   assert.equal(res.requested.length, 0);
 });
 

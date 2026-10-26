@@ -1,15 +1,23 @@
-﻿# Снимает фирменный ассистент (Breeno и родню), который перехватывает долгое нажатие
-# кнопки питания, и оставляет помощником Google/Gemini.
+﻿# Снимает фирменный ассистент Breeno (HeyTap speech assist), который перехватывает
+# долгое нажатие кнопки питания на ColorOS. Обратимо, без root.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\breeno-off.ps1
-#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\breeno-off.ps1 -Restore
+#   ... -All          ещё и AI-движок OPPO (может быть нужен другим функциям!)
+#   ... -Uninstall    для защищённых пакетов: uninstall --user 0 (тоже обратимо)
+#   ... -Restore      вернуть всё как было
+#
+# На ColorOS 16 пакета com.oplus.breeno нет: Breeno разложен на части —
+#   com.heytap.speechassist          голосовой ассистент
+#   com.coloros.assistantscreen      экран ассистента
+#   com.oplus.aiunit / com.aiunit.aon   AI-движок
 #
 # Файл сохранён в UTF-8 с BOM (см. docs/windows-encoding.md).
-# Отключение обратимо: pm disable-user / pm enable, без root, приложение не удаляется.
 
 param(
   [string]$Adb = "",
   [switch]$Restore,
+  [switch]$Uninstall,
+  [switch]$All,
   [switch]$Yes
 )
 
@@ -19,10 +27,16 @@ try {
   chcp 65001 > $null
 } catch {}
 
-# что считаем фирменным ассистентом
-$VendorPattern = 'breeno|voiceassist|speechassist|assistantscreen|aiunit'
-# что нельзя трогать даже если попало под шаблон (это не ассистенты)
-$DenyPattern = 'com\.oplus\.ocs$|coloros\.ota|oplus\.aiunit\.engine$'
+$VendorPattern = 'breeno|heytap\.speechassist|voiceassist|speechassist|assistantscreen|aiunit'
+$DenyPattern = 'com\.oplus\.ocs$|coloros\.ota'
+# даже если пакет скрыт для пользователя и не виден в pm list packages
+$KnownVendor = @(
+  'com.heytap.speechassist',
+  'com.coloros.assistantscreen',
+  'com.oplus.aiunit',
+  'com.aiunit.aon',
+  'com.oplus.breeno'
+)
 
 function Ok($t)   { Write-Host "[OK] " -ForegroundColor Green -NoNewline; Write-Host $t }
 function Warn($t) { Write-Host "[!]  " -ForegroundColor Yellow -NoNewline; Write-Host $t }
@@ -33,6 +47,30 @@ function Die($t)  { Err $t; Write-Host ""; Read-Host "Enter - закрыть"; e
 
 function Sh($cmd) {
   (& $script:AdbBin "-s" $script:Serial "shell" $cmd 2>&1 | Out-String).Trim()
+}
+
+function Get-PackageSet($args) {
+  $set = @{}
+  foreach ($line in ((Sh $args) -split "`r?`n")) {
+    if ($line -match '^package:(.+)$') { $set[$Matches[1].Trim()] = $true }
+  }
+  return $set
+}
+
+function Get-Role($pkg) {
+  if ($pkg -match 'speechassist|breeno|voiceassist') { return 'voice' }
+  if ($pkg -match 'assistantscreen') { return 'screen' }
+  if ($pkg -match 'aiunit') { return 'engine' }
+  return 'other'
+}
+
+function Get-RoleLabel($role) {
+  switch ($role) {
+    'voice'  { return 'голосовой ассистент Breeno' }
+    'screen' { return 'экран ассистента Breeno' }
+    'engine' { return 'AI-движок OPPO (риск: нужен другим функциям)' }
+    default  { return 'фирменный ассистент' }
+  }
 }
 
 function Ask($q) {
@@ -50,7 +88,7 @@ if (-not $script:AdbBin) {
   else {
     $cached = Join-Path $env:LOCALAPPDATA 'gemini-power-button\platform-tools\adb.exe'
     if (Test-Path $cached) { $script:AdbBin = $cached }
-    else { Die "adb не найден. Запусти сначала scripts\oneclick.ps1 — он его скачает." }
+    else { Die "adb не найден. Сначала запусти scripts\oneclick.ps1 — он его скачает." }
   }
 }
 Ok "adb: $script:AdbBin"
@@ -62,30 +100,39 @@ if (-not $ready) { Die "телефон не виден: проверь кабе�
 $script:Serial = @($ready)[0]
 Ok "телефон: $script:Serial"
 
-# --------------------------------------------------------------- что на телефоне
+# --------------------------------------------------------------- что установлено
 
-Step "Смотрю, какие фирменные ассистенты есть"
-$all = Sh "pm list packages"
-$disabled = Sh "pm list packages -d"
+Step "Смотрю, что установлено"
+$installed = Get-PackageSet "pm list packages --user 0"
+$disabled  = Get-PackageSet "pm list packages -d"
+
 $candidates = @()
-foreach ($line in ($all -split "`r?`n")) {
-  if ($line -notmatch '^package:(.+)$') { continue }
-  $pkg = $Matches[1].Trim()
+foreach ($pkg in $installed.Keys) {
   if ($pkg -notmatch $VendorPattern) { continue }
   if ($pkg -match $DenyPattern) { continue }
-  $isDisabled = $disabled -match ("package:" + [regex]::Escape($pkg) + "(\r?\n|$)")
-  $candidates += [pscustomobject]@{ Package = $pkg; Disabled = [bool]$isDisabled }
+  $candidates += $pkg
+}
+foreach ($pkg in $disabled.Keys) {
+  if ($pkg -notmatch $VendorPattern) { continue }
+  if ($candidates -notcontains $pkg) { $candidates += $pkg }
+}
+if ($Restore) {
+  foreach ($pkg in $KnownVendor) {
+    if ($candidates -notcontains $pkg) { $candidates += $pkg }
+  }
 }
 
 if ($candidates.Count -eq 0) {
-  Ok "фирменных ассистентов не найдено — значит дело не в Breeno"
+  Ok "фирменных ассистентов не найдено"
   Dim "тогда смотри docs/coloros-cn-notes.md, раздел про Activity Launcher"
   Read-Host "Enter - закрыть"
   exit 0
 }
-foreach ($c in $candidates) {
-  $state = if ($c.Disabled) { "уже отключён" } else { "включён" }
-  Dim "$($c.Package) — $state"
+
+foreach ($pkg in $candidates) {
+  $role = Get-Role $pkg
+  $state = if ($disabled.ContainsKey($pkg)) { 'отключён' } elseif (-not $installed.ContainsKey($pkg)) { 'скрыт для пользователя' } else { 'включён' }
+  Dim ("{0,-34} {1,-38} {2}" -f $pkg, (Get-RoleLabel $role), $state)
 }
 
 Step "Текущий помощник"
@@ -94,46 +141,74 @@ Dim "assistant: $cur"
 if ($cur -match 'com\.google') { Ok "Google назначен помощником" }
 else { Warn "помощник не Google — сначала запусти scripts\oneclick.ps1" }
 
-# --------------------------------------------------------------- действие
+# --------------------------------------------------------------- restore
 
 if ($Restore) {
-  Step "Включаю фирменные ассистенты обратно"
-  foreach ($c in $candidates) {
-    $out = Sh "pm enable $($c.Package)"
-    if ($out -match 'Error|Exception') {
-      $out = Sh "cmd package install-existing $($c.Package)"
+  Step "Возвращаю фирменные ассистенты"
+  foreach ($pkg in $candidates) {
+    $out = Sh "pm enable $pkg"
+    if ($out -match 'Error|Exception|Unknown package') {
+      $out = Sh "cmd package install-existing $pkg"
     }
-    if ($out -match 'Error|Exception') { Warn "$($c.Package): $out" } else { Ok "$($c.Package) включён" }
+    if ($out -match 'Unknown package|not found') { Dim "$pkg : на этой сборке нет — пропускаю" }
+    elseif ($out -match 'Error|Exception') { Warn "$pkg : $out" }
+    else { Ok "$pkg включён" }
   }
-  Dim "Проверь: зажатие кнопки питания снова откроет Breeno."
+  Dim "Проверь: долгое нажатие снова откроет Breeno."
   Read-Host "Enter - закрыть"
   exit 0
 }
 
-$toDisable = @($candidates | Where-Object { -not $_.Disabled } | ForEach-Object { $_.Package })
-if ($toDisable.Count -eq 0) {
-  Ok "все фирменные ассистенты уже отключены"
+# --------------------------------------------------------------- disable
+
+$targets = @()
+foreach ($pkg in $candidates) {
+  if (-not $installed.ContainsKey($pkg)) { continue }
+  if ($disabled.ContainsKey($pkg)) { continue }
+  if ((Get-Role $pkg) -eq 'engine' -and -not $All) {
+    Dim "пропускаю $pkg (AI-движок; включить в работу: -All)"
+    continue
+  }
+  $targets += $pkg
+}
+
+if ($targets.Count -eq 0) {
+  Ok "нечего отключать — всё уже снято"
+  Dim "если кнопка всё ещё открывает Breeno, попробуй: -All"
   Read-Host "Enter - закрыть"
   exit 0
 }
 
-Step "Сейчас отключу: $($toDisable -join ', ')"
-Dim "Это обратимо и не требует root: pm disable-user. Вернуть — ключ -Restore."
+Step "Отключаю: $($targets -join ', ')"
+Dim "Обратимо, без root. Вернуть: scripts\breeno-off.ps1 -Restore"
 if (-not (Ask "Продолжить?")) { Die "отменено" }
 
 $failed = @()
-foreach ($pkg in $toDisable) {
+foreach ($pkg in $targets) {
   $out = Sh "pm disable-user --user 0 $pkg"
-  if ($out -match 'Error|Exception|Unknown package') { $failed += $pkg; Warn "$pkg — не вышло: $out" }
-  else { Ok "$pkg отключён" }
+  if ($out -match 'new state: disabled') { Ok "$pkg отключён" }
+  else { Warn "$pkg не поддался: $out"; $failed += $pkg }
+}
+
+if ($failed.Count -gt 0 -and $Uninstall) {
+  Step "Повторяю через uninstall --user 0"
+  $still = @()
+  foreach ($pkg in $failed) {
+    $out = Sh "pm uninstall --user 0 $pkg"
+    if ($out -match 'Success') { Ok "$pkg скрыт для пользователя (вернуть: -Restore)" }
+    else { Warn "$pkg : $out"; $still += $pkg }
+  }
+  $failed = $still
 }
 
 Step "Проверяю результат"
-$disabledAfter = Sh "pm list packages -d"
-$stillOn = @()
-foreach ($pkg in $toDisable) {
-  if ($disabledAfter -match ("package:" + [regex]::Escape($pkg) + "(\r?\n|$)")) { Ok "$pkg действительно отключён" }
-  else { $stillOn += $pkg; Warn "$pkg всё ещё включён" }
+$disabledAfter  = Get-PackageSet "pm list packages -d"
+$installedAfter = Get-PackageSet "pm list packages --user 0"
+$reallyFailed = @()
+foreach ($pkg in $targets) {
+  if ($disabledAfter.ContainsKey($pkg)) { Ok "$pkg отключён" }
+  elseif (-not $installedAfter.ContainsKey($pkg)) { Ok "$pkg скрыт для пользователя" }
+  else { Warn "$pkg всё ещё активен"; $reallyFailed += $pkg }
 }
 
 Step "Пробую запустить ассистента"
@@ -143,14 +218,14 @@ else { Ok "команда запуска ушла — глянь на экран
 
 Write-Host ""
 Write-Host "--- Готово ---" -ForegroundColor White
-if ($stillOn.Count -eq 0) {
+if ($reallyFailed.Count -eq 0) {
   Ok "Breeno снят. Зажми кнопку питания на 0,5 секунды."
-  Dim "Если теперь открывается меню выключения, а не Gemini — включи помощника ещё раз:"
-  Dim "  scripts\oneclick.ps1"
+  Dim "Если кнопка открывает меню выключения, а не Gemini — прогони scripts\oneclick.ps1"
 } else {
-  Warn "Часть пакетов прошивка не дала отключить: $($stillOn -join ', ')"
-  Dim "Это защита ColorOS. Дальше — только Activity Launcher (assistantguidedialog) или root."
+  Warn "Прошивка не дала снять: $($reallyFailed -join ', ')"
+  Dim "Попробуй жёстче:  scripts\breeno-off.ps1 -Uninstall"
+  Dim "Если и это не поможет — Activity Launcher (assistantguidedialog) или root."
 }
-Dim "Вернуть как было:  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\breeno-off.ps1 -Restore"
+Dim "Вернуть как было:  scripts\breeno-off.ps1 -Restore"
 Write-Host ""
 Read-Host "Enter - закрыть"

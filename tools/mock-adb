@@ -21,7 +21,8 @@ const DEFAULT_STATE = {
   assistant: null,
   voiceInteractionService: null,
   powerAction: 'power_menu',
-  disabled: [],
+  disabled: ['com.oplus.customize.coreapp', 'com.android.virtualization.terminal', 'com.android.devicelockcontroller'],
+  uninstalled: [],
   paired: false,
   connected: true,
   prefs: {
@@ -76,11 +77,20 @@ const PACKAGES = [
   'com.android.settings',
   'com.oplus.appmarket',
   'com.heytap.market',
-  'com.oplus.breeno',
+  'com.heytap.speechassist',
+  'com.coloros.assistantscreen',
+  'com.oplus.aiunit',
+  'com.aiunit.aon',
+  'com.oplus.customize.coreapp',
+  'com.android.virtualization.terminal',
+  'com.android.devicelockcontroller',
   'com.oplus.ocs',
   'com.android.systemui',
   'com.oplus.launcher',
 ];
+
+/** Эти пакеты ColorOS защищает: pm disable-user отвечает «new state: default» и ничего не меняет. */
+const DISABLE_PROTECTED = new Set(['com.coloros.assistantscreen', 'com.oplus.aiunit']);
 
 const SETTINGS_PACKAGE_DUMP = `Packages:
   Package [com.android.settings] (1a2b3c):
@@ -185,9 +195,14 @@ function handle(args) {
     return 0;
   }
 
+  if (sh === 'pm list packages --user 0' || sh === 'pm list packages --user 0 ') {
+    const hidden = new Set(state.uninstalled || []);
+    out(PACKAGES.filter((p) => !hidden.has(p)).map((p) => `package:${p}`).join('\n'));
+    return 0;
+  }
+
   if (sh === 'pm list packages -d' || sh === 'pm list packages -d --user 0') {
-    const disabled = state.disabled || [];
-    out(disabled.map((p) => `package:${p}`).join('\n'));
+    out((state.disabled || []).map((p) => `package:${p}`).join('\n'));
     return 0;
   }
 
@@ -198,9 +213,10 @@ function handle(args) {
       out(`Error: java.lang.IllegalArgumentException: Unknown package: ${pkg}`);
       return 1;
     }
-    if (/com\.oplus\.ocs$/i.test(pkg)) {
-      out('Error: package is protected system component');
-      return 1;
+    if (DISABLE_PROTECTED.has(pkg)) {
+      // так ведёт себя ColorOS на защищённых пакетах: команда проходит, состояние не меняется
+      out(`Package ${pkg} new state: default`);
+      return 0;
     }
     state.disabled = [...new Set([...(state.disabled || []), pkg])];
     saveState(state);
@@ -208,15 +224,42 @@ function handle(args) {
     return 0;
   }
 
-  let pe = sh.match(/^pm enable\s+(\S+)$/);
-  if (pe) {
-    state.disabled = (state.disabled || []).filter((p) => p !== pe[1]);
+  let pu = sh.match(/^pm uninstall(?:\s+--user\s+\d+)?\s+(\S+)$/);
+  if (pu) {
+    const pkg = pu[1];
+    if (!PACKAGES.includes(pkg)) {
+      out('Failure [not installed for 0]');
+      return 1;
+    }
+    state.uninstalled = [...new Set([...(state.uninstalled || []), pkg])];
+    state.disabled = (state.disabled || []).filter((p) => p !== pkg);
     saveState(state);
-    out(`Package ${pe[1]} new state: enabled`);
+    out('Success');
     return 0;
   }
 
-  if (/^cmd package install-existing\s+/.test(sh)) {
+  let pe = sh.match(/^pm enable\s+(\S+)$/);
+  if (pe) {
+    const pkg = pe[1];
+    if (!PACKAGES.includes(pkg)) {
+      out(`Error: java.lang.IllegalArgumentException: Unknown package: ${pkg}`);
+      return 1;
+    }
+    state.disabled = (state.disabled || []).filter((p) => p !== pkg);
+    saveState(state);
+    out(`Package ${pkg} new state: enabled`);
+    return 0;
+  }
+
+  let pie = sh.match(/^cmd package install-existing\s+(\S+)$/);
+  if (pie) {
+    const pkg = pie[1];
+    if (!PACKAGES.includes(pkg)) {
+      out(`Error: package ${pkg} not found`);
+      return 1;
+    }
+    state.uninstalled = (state.uninstalled || []).filter((p) => p !== pkg);
+    saveState(state);
     out('Package installed for user: 0');
     return 0;
   }

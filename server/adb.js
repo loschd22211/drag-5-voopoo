@@ -605,31 +605,66 @@ function isDeniedVendorPackage(pkg) {
   return VENDOR_DENYLIST.some((re) => re.test(pkg));
 }
 
+/**
+ * На ColorOS 16 пакета `com.oplus.breeno` больше нет: Breeno разложен на части.
+ * Классификация нужна, чтобы не отключать вслепую AI-движок, которым пользуются
+ * другие системные функции (галерея, перевод и т.п.).
+ */
+function classifyVendorPackage(pkg) {
+  if (/speechassist|voiceassist|\bbreeno\b/i.test(pkg)) {
+    return { role: 'voice', label: 'голосовой ассистент (Breeno)', risk: 'safe' };
+  }
+  if (/assistantscreen/i.test(pkg)) {
+    return { role: 'screen', label: 'экран ассистента Breeno', risk: 'safe' };
+  }
+  if (/aiunit/i.test(pkg)) {
+    return { role: 'engine', label: 'AI-движок OPPO (может быть нужен другим функциям)', risk: 'caution' };
+  }
+  return { role: 'other', label: 'фирменный ассистент', risk: 'caution' };
+}
+
 /** Список фирменных ассистентов на устройстве + отключены ли они уже. */
 async function listVendorAssistants(serial) {
-  const enabledRes = await shell(serial, 'pm list packages', { timeout: 30000 });
+  const installedRes = await shell(serial, 'pm list packages --user 0', { timeout: 30000 });
   const disabledRes = await shell(serial, 'pm list packages -d', { timeout: 30000 });
-  const enabled = parsePackageList(enabledRes.stdout || '');
+  const installed = parsePackageList(installedRes.stdout || '');
+  const allRes = installed.size ? installedRes : await shell(serial, 'pm list packages', { timeout: 30000 });
+  const universe = parsePackageList(allRes.stdout || '');
   const disabled = parsePackageList(disabledRes.stdout || '');
-  const all = [...new Set([...enabled, ...disabled])].filter((p) => VENDOR_ASSISTANT_RE.test(p));
+  const all = [...universe].filter((p) => VENDOR_ASSISTANT_RE.test(p));
   return {
-    ok: enabledRes.ok,
+    ok: allRes.ok,
     packages: all
-      .map((pkg) => ({
-        package: pkg,
-        disabled: disabled.has(pkg),
-        protected: isDeniedVendorPackage(pkg),
-        kind: /breeno/i.test(pkg) ? 'Breeno' : 'голосовой сервис OPPO/HeyTap',
-      }))
+      .map((pkg) => {
+        const { role, label, risk } = classifyVendorPackage(pkg);
+        return {
+          package: pkg,
+          role,
+          kind: label,
+          risk,
+          disabled: disabled.has(pkg),
+          protected: isDeniedVendorPackage(pkg),
+          installedDist: installed.size ? installed.has(pkg) : true,
+        };
+      })
       .sort((a, b) => Number(a.protected) - Number(b.protected) || a.package.localeCompare(b.package)),
   };
 }
 
+async function readDisabledSet(serial) {
+  const r = await shell(serial, 'pm list packages -d', { timeout: 30000 });
+  return parsePackageList(r.stdout || '');
+}
+
 /**
- * Отключает пакеты для текущего пользователя. Обратимо: enablePackages / pm enable.
- * `pm disable-user` не требует root и не удаляет приложение.
+ * Отключает пакеты для текущего пользователя.
+ *
+ * `pm disable-user` не требует root и не удаляет приложение. Но часть пакетов ColorOS
+ * защищает: команда отвечает «new state: default» и состояние не меняется. Для таких
+ * есть второй, более сильный режим — `pm uninstall --user 0` (пакет скрывается только
+ * у пользователя 0, возвращается через `cmd package install-existing`).
  */
-async function disablePackages(serial, packages) {
+async function disablePackages(serial, packages, options = {}) {
   const steps = [];
   const targets = (Array.isArray(packages) ? packages : [packages])
     .filter((p) => typeof p === 'string' && /^[a-zA-Z0-9_.]+$/.test(p))
@@ -637,14 +672,46 @@ async function disablePackages(serial, packages) {
 
   for (const pkg of targets) {
     const r = await shell(serial, `pm disable-user --user 0 ${pkg}`, { timeout: 20000 });
-    const failed = /Error|Exception|not installed|Unknown package/i.test(r.stdout + r.stderr);
-    steps.push({ package: pkg, ok: r.ok && !failed, out: clip(r.stdout + r.stderr, 600) });
+    const out = r.stdout + r.stderr;
+    steps.push({
+      package: pkg,
+      mode: 'disable-user',
+      ok: r.ok && /new state: disabled/i.test(out),
+      out: clip(out, 600),
+    });
   }
 
-  const after = await shell(serial, 'pm list packages -d', { timeout: 30000 });
-  const disabledNow = parsePackageList(after.stdout || '');
-  const verified = targets.filter((p) => disabledNow.has(p));
-  return { ok: verified.length === targets.length, steps, verified, requested: targets };
+  let disabledNow = await readDisabledSet(serial);
+  let verified = targets.filter((p) => disabledNow.has(p));
+  let missing = targets.filter((p) => !disabledNow.has(p));
+
+  // второй проход: для тех, кто не поддался disable-user
+  if (options.uninstallForCurrentUser && missing.length) {
+    const retry = [];
+    for (const pkg of missing) {
+      const r = await shell(serial, `pm uninstall --user 0 ${pkg}`, { timeout: 25000 });
+      const out = r.stdout + r.stderr;
+      const ok = r.ok && /Success/i.test(out);
+      retry.push({ package: pkg, mode: 'uninstall-user', ok, out: clip(out, 600) });
+    }
+    steps.push(...retry);
+    disabledNow = await readDisabledSet(serial);
+    const stillInstalled = new Set(
+      [...parsePackageList((await shell(serial, 'pm list packages --user 0', { timeout: 30000 })).stdout || '')],
+    );
+    verified = targets.filter(
+      (p) => disabledNow.has(p) || (retry.some((r) => r.package === p && r.ok) && !stillInstalled.has(p)),
+    );
+    missing = targets.filter((p) => !verified.includes(p));
+  }
+
+  return {
+    ok: missing.length === 0,
+    steps,
+    verified,
+    failed: missing,
+    requested: targets,
+  };
 }
 
 /** Включает пакеты обратно. */
@@ -718,5 +785,6 @@ module.exports = {
     parseVoiceServices,
     rankPowerActivities,
     scoreActivity,
+    classifyVendorPackage,
   },
 };
