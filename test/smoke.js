@@ -415,6 +415,17 @@ test('debloat-cn: выключает китайское, оставляет ге
   assert.ok(src.includes('pm unsuspend --user 0'), 'откат снимает и suspend');
 });
 
+test('breeno-gesture: пробует роль ASSISTANT и умеет вернуть Breeno', () => {
+  const file = path.join(__dirname, '..', 'scripts', 'breeno-gesture.ps1');
+  assert.ok(fs.existsSync(file), 'скрипт должен существовать');
+  const src = fs.readFileSync(file, 'utf8');
+  assert.ok(src.includes('add-role-holder --user 0 android.app.role.ASSISTANT'), 'роль ассистента выдаётся Google');
+  assert.ok(src.includes('cmd package install-existing'), 'Breeno возвращается в работу перед опытом');
+  assert.ok(src.includes('[switch]$Restore'), 'нужен откат');
+  assert.ok(src.includes('logcat'), 'компонент жеста снимается из журнала');
+  assert.ok(src.includes('$ScriptVersion'), 'версия печатается');
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {
