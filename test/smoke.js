@@ -410,6 +410,9 @@ test('debloat-cn: выключает китайское, оставляет ге
   assert.ok(src.includes("'com.oplus.games'"), 'гейм-бар не должен выключаться');
   assert.ok(src.includes('window_animation_scale 0.5'), 'ускорение интерфейса');
   assert.ok(!/pm uninstall/.test(src), 'удалять пакеты нельзя — только disable-user');
+  // ColorOS на части пакетов отвечает "new state: default" — нужен запасной путь
+  assert.ok(src.includes('pm suspend --user 0'), 'если disable-user не сработал — suspend');
+  assert.ok(src.includes('pm unsuspend --user 0'), 'откат снимает и suspend');
 });
 
 (async () => {

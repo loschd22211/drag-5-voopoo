@@ -99,9 +99,24 @@ $Keep = @(
 function Get-State($pkg) {
   $out = Sh ("pm list packages -d --user 0 " + $pkg)
   if ($out -match ("package:" + [regex]::Escape($pkg) + "(\r?\n|$)")) { return 'отключён' }
+  $dump = Sh ("dumpsys package " + $pkg)
+  if ($dump -match 'suspended=true') { return 'приостановлен' }
   $out2 = Sh ("pm list packages --user 0 " + $pkg)
   if ($out2 -match ("package:" + [regex]::Escape($pkg) + "(\r?\n|$)")) { return 'включён' }
   return 'нет'
+}
+
+# ColorOS на части пакетов (браузер, market, assistantscreen) отвечает
+# "new state: default" и disable-user не срабатывает. Тогда приостанавливаем:
+# pm suspend --user 0, откат — pm unsuspend.
+function Disable-Package($pkg) {
+  $r = Sh ("pm disable-user --user 0 " + $pkg)
+  $state = Get-State $pkg
+  if ($state -eq 'отключён') { return [pscustomobject]@{ Ok = $true; How = 'disable'; Out = '' } }
+  Sh ("pm suspend --user 0 " + $pkg) | Out-Null
+  $state = Get-State $pkg
+  if ($state -eq 'приостановлен') { return [pscustomobject]@{ Ok = $true; How = 'suspend'; Out = '' } }
+  return [pscustomobject]@{ Ok = $false; How = ''; Out = ($r -replace '\s+', ' ') }
 }
 
 # ---------------------------------------------------------------- main
@@ -116,6 +131,7 @@ if ($Restore) {
   Write-Step "Возвращаю приложения"
   $n = 0
   foreach ($p in $Targets) {
+    Sh ("pm unsuspend --user 0 " + $p) | Out-Null
     Sh ("pm enable --user 0 " + $p) | Out-Null
     if ((Get-State $p) -eq 'включён') { $n++ }
   }
@@ -133,9 +149,15 @@ foreach ($p in $Targets) {
   $state = Get-State $p
   if ($state -eq 'нет') { Write-Dim ("{0}: не установлен" -f $p); $skip++; continue }
   if ($state -eq 'отключён') { Write-Dim ("{0}: уже отключён" -f $p); $off++; continue }
-  $r = Sh ("pm disable-user --user 0 " + $p)
-  if ((Get-State $p) -eq 'отключён') { Write-Ok ("{0}: отключён" -f $p); $off++ }
-  else { Write-Warn ("{0}: не отключился ({1})" -f $p, ($r -replace '\s+', ' ')) }
+  $res = Disable-Package $p
+  if ($res.Ok) {
+    $word = 'отключён'
+    if ($res.How -eq 'suspend') { $word = 'приостановлен' }
+    Write-Ok ("{0}: {1}" -f $p, $word)
+    $off++
+  } else {
+    Write-Warn ("{0}: не поддался ({1})" -f $p, $res.Out)
+  }
 }
 
 Write-Step "Что оставили"
