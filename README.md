@@ -105,6 +105,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir.FullName 'sc
 | `docs/coloros-cn-notes.md` | Что делать, если прошивка блокирует настройку (китайские сборки) |
 | `docs/windows-encoding.md` | Если PowerShell ругается на «отсутствует `}`» и показывает кракозябры |
 | `scripts/breeno-off.sh` / `breeno-off.ps1` | Снять фирменный Breeno, который перехватывает кнопку (обратимо) |
+| `scripts/gemini-trigger.ps1` | Если кнопку не отдаёт даже suspend: ставит ColorGoogle, который забирает кнопку питания и открывает Gemini |
 
 ---
 
@@ -228,6 +229,7 @@ adb shell settings delete secure voice_interaction_service
 | Назначение «не применилось» (значение вернулось) | прошивка защищает `Settings.Secure` от записи через adb | открыть экран «Power button» из шага 5 и переключить руками + `docs/coloros-cn-notes.md` |
 | Значение записалось, но кнопка открывает Breeno | Breeno ставит свой обработчик клавиши поверх роли помощника | `scripts/breeno-off.sh` / `breeno-off.ps1`: перебирают `disable-user → suspend → hide → uninstall` и проверяют результат по `dumpsys`. На ColorOS 16 обычно срабатывает `suspend` |
 | Значение записалось, но кнопка всё равно открывает меню питания | системный обработчик кнопки игнорирует помощника | `docs/coloros-cn-notes.md`, раздел «Activity Launcher / MiCTS» |
+| Breeno снят (`speechassist` off, `assistantscreen` suspended), а кнопка всё равно зовёт Breeno | вызов зашит в обработчик клавиши на уровне фреймворка | `scripts/gemini-trigger.ps1` — ставит ColorGoogle, он перехватывает кнопку сам |
 | Gemini открывается, но не слушает микрофон | нет разрешения | шаг 4 → «Выдать микрофон Gemini» |
 | «Окей, Google» не работает вообще | на китайских сборках часто нет нужной системной библиотеки | кнопка будет работать, голосовая активация — нет; это ограничение прошивки |
 
@@ -261,6 +263,7 @@ scripts/
   oneclick.sh       одна команда: всё автоматически (Linux/macOS)
   oneclick.ps1      одна команда: всё автоматически (Windows)
   oneclick.cmd      двойной клик для Windows
+  gemini-trigger.ps1  ColorGoogle: кнопка питания -> Gemini (последний рубеж)
   adb-gemini.sh     CLI для Linux/macOS (с вопросами)
   adb-gemini.ps1    CLI для Windows
 tools/

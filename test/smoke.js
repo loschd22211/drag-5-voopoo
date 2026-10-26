@@ -159,7 +159,7 @@ test('ранжирование: реальный список с Ace 5 (ColorOS 
 });
 
 test('PowerShell-скрипты сохранены в UTF-8 с BOM (иначе PS 5.1 ломает кириллицу)', () => {
-  const files = ['oneclick.ps1', 'adb-gemini.ps1'];
+  const files = ['oneclick.ps1', 'adb-gemini.ps1', 'breeno-off.ps1', 'gemini-trigger.ps1'];
   for (const name of files) {
     const buf = fs.readFileSync(path.join(__dirname, '..', 'scripts', name));
     assert.ok(
@@ -234,6 +234,23 @@ test('защищённые пакеты не отключаются', async () =
 test('мусорные имена пакетов не попадают в shell', async () => {
   const res = await adb.disablePackages('MOCK000ACE5', ['com.heytap.speechassist; rm -rf /']);
   assert.equal(res.requested.length, 0);
+});
+
+test('установщик ColorGoogle: нужные шаги на месте', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'gemini-trigger.ps1'), 'utf8');
+  const must = [
+    'dev.evoker.homeholdcts',           // пакет приложения
+    'install -r -g',                    // установка сразу с разрешениями
+    'android.permission.READ_LOGS',     // без него не работает агент
+    'voice_interaction_service',        // ColorOS оставляет его пустым
+    'SYSTEM_ALERT_WINDOW',              // «поверх других приложений»
+    'desktopsearch --method status',    // проверка статуса агента
+    'SHA256SUMS',                       // сверка контрольной суммы
+  ];
+  for (const marker of must) {
+    assert.ok(src.includes(marker), `в установщике нет «${marker}»`);
+  }
+  assert.ok(!/1MB/.test(src), 'суффикс 1MB ломает парсеры — используем 1048576');
 });
 
 (async () => {
