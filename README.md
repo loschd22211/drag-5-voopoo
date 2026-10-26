@@ -108,6 +108,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir.FullName 'sc
 | `scripts/gemini-trigger.ps1` | Если кнопку не отдаёт даже suspend: ставит ColorGoogle, который забирает кнопку питания и открывает Gemini |
 | `scripts/gemini-one-click.ps1` (`-Test` — только замер, `-Restore` — откат) | **Главный:** один запуск — сам назначает Google помощником, снимает Breeno, включает жест и VPN, проверяет кнопку |
 | `scripts/lockscreen-player.ps1` | включает карточку плеера на экране блокировки и говорит, что мешает (важность канала / нет MediaSession) |
+| `scripts/debloat-cn.ps1` | отключает китайские предустановленные приложения (гейм-бар не трогает) и ускоряет анимации; `-Restore` возвращает |
 | `scripts/power-key-reset.ps1` | Возвращает кнопку питания в заводское состояние и убирает ColorGoogle (обратимо) |
 | `scripts/debloat-market.ps1` | Убирает магазин HeyTap и сканер APK, чтобы сторонние приложения ставились без «проверки» |
 
