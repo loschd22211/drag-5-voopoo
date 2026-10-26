@@ -395,6 +395,9 @@ test('lockscreen-player: включает карточку плеера и об�
   assert.ok(!src.includes('сейчас ничего не играет'), 'старое вранье про «ничего не играет» не должно вернуться');
   assert.ok(src.includes('нельзя сделать из adb'), 'нельзя обещать то, что из shell не меняется');
   assert.ok(src.includes('settings list system'), 'проверяем и ключи медиа в namespace system');
+  // если канал заблокирован приложением, важность руками не поднять — надо отличать
+  assert.ok(src.includes('Get-ChannelInfo'), 'нужно читать параметры канала');
+  assert.ok(src.includes('mImportanceLockedDefaultApp'), 'и признаки блокировки важности');
 });
 
 (async () => {
