@@ -3,6 +3,7 @@
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\breeno-gesture.ps1
 #   ... -Restore   вернуть Breeno как было
+#   ... -Panel     только убрать левую китайскую панель (Breeno/assistant screen)
 #
 # Что делает:
 #   1. возвращает Breeno-пакеты в работу (иначе жест мёртвый и ловить нечего)
@@ -15,10 +16,11 @@
 param(
   [string]$Adb = "",
   [string]$Serial = "",
-  [switch]$Restore
+  [switch]$Restore,
+  [switch]$Panel
 )
 
-$ScriptVersion = '2026-10-27.7'
+$ScriptVersion = '2026-10-27.8'
 $ErrorActionPreference = "Continue"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -69,6 +71,17 @@ function Get-FocusLine {
   return ($m.Value -replace '\s+', ' ')
 }
 
+# Левая панель ColorOS (Breeno/assistant screen) включается теми же ключами,
+# которыми мы возвращали Breeno. Поэтому в конце прогона её надо снять обратно.
+function Remove-LeftPanel {
+  Sh 'pm suspend --user 0 com.coloros.assistantscreen' | Out-Null
+  Sh 'settings put secure key_com_coloros_assistantscreen 0' | Out-Null
+  Sh 'settings put secure remote_view_entry_com.coloros.assistantscreen 0' | Out-Null
+  Sh 'settings put secure assistant_screen_type 0' | Out-Null
+  Sh 'settings put secure asistant_screen_type 0' | Out-Null
+  Write-Ok "левая китайская панель снята"
+}
+
 function Enable-Breeno {
   foreach ($p in $BreenoPkgs) {
     Sh ("cmd package install-existing --user 0 " + $p) | Out-Null
@@ -89,6 +102,7 @@ function Watch-Press {
     if ($f -and $seen -notcontains $f) {
       $seen += $f
       if ($f -notmatch 'launcher') { Write-Dim ("   {0} с: {1}" -f [math]::Round($sw.Elapsed.TotalSeconds, 1), $f) }
+      if ($f -match 'ActionsDialog') { Write-Dim "   это меню выключения: нажата кнопка питания, а не полоса жестов" }
     }
   }
   return $seen
@@ -112,6 +126,14 @@ Write-Step "Кто сейчас держит роль ассистента"
 $role = Sh 'cmd role get-role-holders android.app.role.ASSISTANT'
 if (-not $role) { Write-Dim "роль никому не выдана" } else { foreach ($l in ($role -split "`n")) { Write-Dim $l.Trim() } }
 
+if ($Panel) {
+  Write-Step "Убираю левую китайскую панель"
+  Remove-LeftPanel
+  Write-Host ""
+  Read-Host "Enter — закрыть"
+  exit 0
+}
+
 if ($Restore) {
   Write-Step "Возвращаю Breeno"
   Enable-Breeno
@@ -128,7 +150,7 @@ Write-Ok "готово"
 
 Write-Step "Ловлю, что ром запускает по жесту"
 Sh 'logcat -c' | Out-Null
-Write-Dim "зажми полосу жестов и держи 1-2 секунды"
+Write-Dim "зажми ПОЛОСУ ЖЕСТОВ внизу экрана (не кнопку питания) и держи 1-2 секунды"
 $cmpPkg = ''
 $seenBefore = Watch-Press -Seconds 12
 $log = Sh 'logcat -d -t 400'
@@ -197,6 +219,9 @@ if ($found -ne '') {
   Write-Dim "Значит SystemUI рома просто проглатывает жест, на роль ASSISTANT он не падает"
   Write-Dim ("пакет оставил отключённым, чтобы не видеть «страница недоступна»; вернуть: cmd package install-existing --user 0 " + $pkg)
 }
+
+Write-Host ""
+Remove-LeftPanel
 
 Write-Host ""
 Read-Host "Enter — закрыть"
