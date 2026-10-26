@@ -484,6 +484,52 @@ adb shell dumpsys window   → искать mCurrentFocus=Window{… com.google.
 
 ---
 
+## 2.998. Запустить Gemini из shell нельзя — вообще
+
+Попытка измерить холодный старт напрямую:
+
+```
+adb shell am start -W -n com.google.android.googlequicksearchbox/com.google.android.apps.search.assistant.surfaces.voice.robin.main.MainActivity
+```
+
+даёт
+
+```
+java.lang.SecurityException: Permission Denial: starting Intent { ... mCallingUid=2000 }
+from null (pid=4558, uid=2000) not exported from uid 10128
+```
+
+Активность `robin` (интерфейс Gemini) **не exported**: uid 2000 (shell) её запускать не
+имеет права. Значит:
+
+* `am start` для Gemini/robin бесполезен — ни как «прогрев», ни как проверка;
+* проверять кнопку можно только теми путями, которыми ходит сама система:
+  роль помощника + key event (`input keyevent --longpress 26`).
+
+Цена ошибки: именно из-за этого `KEYCODE_ASSIST`/`am start` выдавали «ничего не
+произошло», хотя физическая кнопка работала.
+
+**Что ещё видно в `settings list secure` на PKG110:**
+
+```
+assist_gesture_enabled=1            assist_gesture_wake_enabled=1
+assist_long_press_home_enabled=1    key_home_long_press_action=2
+assistant=…googlequicksearchbox/com.google.android.voiceinteraction.GsaVoiceInteractionService
+default_voice_assist_picker_service=…GsaVoiceInteractionService
+speech_assist_power_wakeup=0
+assistant_screen_type=2             assistant_screen_type_left_enable=0
+```
+
+`assistant_screen_type` — это **не** кнопка питания: ключ отвечает за панель Google
+Discover слева от рабочего стола (2 = Discover есть, 0 = нет), и у него есть
+дубликат с опечаткой `asistant_screen_type`. Не путать с помощником по кнопке.
+
+`cached_apps_freezer` на этой прошивке равен `device_default`, а не `enabled`:
+решение о заморозке принимает сама ColorOS, поставить `disabled` можно, но эффект
+проверять только после перезагрузки.
+
+---
+
 ## 2.997. «Помощник открылся через минуту» и подсказка на экране блокировки
 
 Два разных явления, которые легко принять за одно.
