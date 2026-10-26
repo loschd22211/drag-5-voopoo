@@ -20,7 +20,7 @@ param(
   [switch]$Raw
 )
 
-$ScriptVersion = '2026-10-27.3'
+$ScriptVersion = '2026-10-27.4'
 $ErrorActionPreference = "Continue"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -193,12 +193,22 @@ foreach ($pkg in $any) {
   }
 }
 
+Write-Step "Другие ключи ромa про медиа"
+$sysKeys = @()
+foreach ($l in ((Sh 'settings list system') -split "`n")) {
+  if ($l -match 'media') { $sysKeys += $l.Trim() }
+}
+if ($sysKeys.Count -eq 0) { Write-Dim "в namespace system ключей про медиа нет" }
+else { foreach ($k in $sysKeys) { Write-Dim $k } }
+
 Write-Host ""
 if ($needFix.Count -gt 0) {
   foreach ($f in $needFix) {
     Write-Dim ("Подними важность: Настройки -> Уведомления -> {0} -> канал «{1}» -> важность «Высокая»" -f $f.Pkg, $f.Channel)
   }
   Write-Dim "Это единственное, что нельзя сделать из adb: каналы уведомлений меняет только само приложение или ты руками"
+  Write-Dim "Быстрый путь: зажми уведомление плеера в шторке -> «Настройки» -> важность «Высокая»"
+  Write-Dim "После этого запусти скрипт снова — он покажет новую важность канала"
 } elseif ($unknown.Count -gt 0) {
   Write-Dim "Приложение играет, но не отдаёт уведомление — системный плеер на локскрине ему недоступен"
   Write-Dim "Это ограничение приложения, не настройка телефона"
