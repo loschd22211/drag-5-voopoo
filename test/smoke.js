@@ -337,7 +337,11 @@ test('плеер на локскрине и AOSP-ключи кнопки заш�
   assert.ok(src.includes('key_home_long_press_action 2'), 'AOSP-код 2 = помощник по долгому нажатию Home');
   // проверка кнопки больше не делает один замер через фиксированную паузу
   assert.ok(!/Start-Sleep -Seconds 5/.test(src), 'один замер через 5 секунд врал — нужен опрос');
-  assert.ok(src.includes('for ($i = 0; $i -lt 6; $i++)'), 'фокус надо опрашивать несколько раз');
+  assert.ok(/for \(\$i = 0; \$i -lt \d+; \$i\+\+\)/.test(src), 'фокус надо опрашивать несколько раз');
+  // KEYCODE_ASSIST на ColorOS поднимает окно через раз: эмулируем именно удержание питания
+  assert.ok(src.includes('input keyevent --longpress 26'), 'проверка должна имитировать удержание кнопки питания');
+  assert.ok(!src.includes("input keyevent KEYCODE_ASSIST' | Out-Null"), 'KEYCODE_ASSIST больше не единственная проверка');
+  assert.ok(src.includes('cached_apps_freezer'), 'нужно снимать заморозку фоновых приложений');
 });
 
 (async () => {
