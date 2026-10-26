@@ -342,7 +342,8 @@ test('плеер на локскрине и AOSP-ключи кнопки заш�
   assert.ok(/for \(\$i = 1; \$i -le \$Tries; \$i\+\+\)/.test(src), 'каждый путь проверяется несколько раз');
   assert.ok(src.includes("input swipe"), 'жест от нижнего угла проверяется реальным свайпом');
   assert.ok(src.includes('[switch]$Test'), 'нужен режим -Test: только замер, без изменения настроек');
-  assert.ok(src.includes('Wait-AssistantWindow'), 'ожидание окна вынесено в отдельную функцию с таймаутом');
+  assert.ok(src.includes('Get-AssistantWindows'), 'оверлей-сессия не берёт фокус — надо смотреть список окон');
+  assert.ok(src.includes('Reset-Screen'), 'перед каждой попыткой экран надо будить и сбрасывать');
   // KEYCODE_ASSIST на ColorOS поднимает окно через раз: эмулируем именно удержание питания
   assert.ok(src.includes('input keyevent --longpress 26'), 'проверка должна имитировать удержание кнопки питания');
   assert.ok(!src.includes("input keyevent KEYCODE_ASSIST' | Out-Null"), 'KEYCODE_ASSIST больше не единственная проверка');

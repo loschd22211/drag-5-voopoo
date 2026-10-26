@@ -182,29 +182,90 @@ function Get-ScreenSize {
   return @([int]$m.Groups[1].Value, [int]$m.Groups[2].Value)
 }
 
-function Wait-AssistantWindow {
-  param([int]$Seconds = 12)
-  $sw = [Diagnostics.Stopwatch]::StartNew()
-  $seen = @()
-  while ($sw.Elapsed.TotalSeconds -lt $Seconds) {
-    Start-Sleep -Milliseconds 600
-    $win = Sh 'dumpsys window'
-    $m = [regex]::Match($win, 'mCurrentFocus=Window\{[^}]*\}')
-    if (-not $m.Success) { continue }
-    $line = $m.Value -replace '\s+', ' '
-    if ($seen -notcontains $line) { $seen += $line }
-    if ($line -match 'googlequicksearchbox|apps\.bard') {
-      return [pscustomobject]@{ Ok = $true; Secs = [math]::Round($sw.Elapsed.TotalSeconds, 1); Focus = $line; Seen = $seen }
-    }
-  }
-  $last = ''
-  if ($seen.Count -gt 0) { $last = $seen[$seen.Count - 1] }
-  return [pscustomobject]@{ Ok = $false; Secs = [math]::Round($sw.Elapsed.TotalSeconds, 1); Focus = $last; Seen = $seen }
+function Get-FocusLine {
+  $win = Sh 'dumpsys window'
+  $m = [regex]::Match($win, 'mCurrentFocus=Window\{[^}]*\}')
+  if (-not $m.Success) { return '' }
+  return ($m.Value -replace '\s+', ' ')
 }
 
-function Go-Home {
-  Sh 'input keyevent 3' | Out-Null   # KEYCODE_HOME: убираем помощника с экрана
+# Окно-оверлей помощника (TYPE_VOICE_INTERACTION, «как звонок») НЕ забирает фокус:
+# на заблокированном экране фокус остаётся у шторки, хотя Gemini уже виден поверх.
+# Поэтому одного mCurrentFocus мало — смотрим ещё список окон.
+function Get-AssistantWindows {
+  $win = Sh 'dumpsys window windows'
+  $marks = @()
+  foreach ($l in ($win -split "`n")) {
+    if ($l -match 'Window\{' -and $l -match 'googlequicksearchbox|AssistPreview|VoiceInteraction|robin') {
+      $marks += ($l -replace '\s+', ' ').Trim()
+    }
+  }
+  return $marks
+}
+
+function Get-Wakefulness {
+  $p = Sh 'dumpsys power'
+  $m = [regex]::Match($p, 'mWakefulness=(\w+)')
+  if ($m.Success) { return $m.Groups[1].Value }
+  return 'unknown'
+}
+
+# Перед каждой попыткой: включаем экран и убираем помощника, иначе вторая попытка
+# проверяет уже не кнопку, а заставку. Именно из-за этого прошлый замер дал 0 из 5.
+function Reset-Screen {
+  $w = Get-Wakefulness
+  if ($w -ne 'Awake') {
+    Sh 'input keyevent 224' | Out-Null   # KEYCODE_WAKEUP
+    Start-Sleep -Milliseconds 700
+  }
+  Sh 'input keyevent 4' | Out-Null       # BACK: закрыть меню/помощника, если открыт
+  Sh 'input keyevent 3' | Out-Null       # HOME
   Start-Sleep -Milliseconds 700
+  $f = Get-FocusLine
+  if ($f -match 'keyguard|NotificationShade') { return $false }
+  return $true
+}
+
+function Invoke-Attempt {
+  param([string]$How, [int]$Seconds = 12)
+
+  if (-not (Reset-Screen)) {
+    return [pscustomobject]@{ Ok = $false; Secs = 0; Focus = ''; Seen = @(); Locked = $true; Hit = '' }
+  }
+
+  $before = Get-FocusLine
+  Sh 'logcat -b events -c' | Out-Null
+
+  if ($How -eq 'power') {
+    Sh 'input keyevent --longpress 26' | Out-Null
+  } else {
+    $size = Get-ScreenSize
+    $w = $size[0]; $h = $size[1]
+    Sh ("input swipe {0} {1} {2} {3} 300" -f [int]($w * 0.02), ($h - 10), [int]($w * 0.5), [int]($h * 0.55)) | Out-Null
+  }
+
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  $seen = @()
+  $focus = ''
+  $overlay = ''
+  while ($sw.Elapsed.TotalSeconds -lt $Seconds) {
+    Start-Sleep -Milliseconds 600
+    $line = Get-FocusLine
+    if ($line -and $seen -notcontains $line) { $seen += $line }
+    if ($line -match 'googlequicksearchbox|apps\.bard') { $focus = $line; break }
+    $marks = Get-AssistantWindows
+    if ($marks.Count -gt 0) { $overlay = $marks[0]; break }
+  }
+
+  # Дублирующая улика из журнала событий: даже если окно уже ушло, факт фокуса останется
+  $hit = ''
+  $ev = Sh 'logcat -b events -d'
+  foreach ($l in ($ev -split "`n")) {
+    if ($l -match 'am_focused_activity' -and $l -match 'googlequicksearchbox') { $hit = ($l -replace '\s+', ' ').Trim(); break }
+  }
+
+  $ok = ($focus -ne '') -or ($hit -ne '') -or ($overlay -ne '')
+  return [pscustomobject]@{ Ok = $ok; Secs = [math]::Round($sw.Elapsed.TotalSeconds, 1); Focus = $focus; Overlay = $overlay; Seen = $seen; Locked = $false; Hit = $hit; Before = $before }
 }
 
 function Test-Assistant {
@@ -213,52 +274,65 @@ function Test-Assistant {
   Say-Step "Замер: чем реально открывается помощник"
   Say-Dim "телефон трогать не нужно, всё делается через adb"
 
-  # 1. удержание кнопки питания: тот же путь в PhoneWindowManager, что у физической кнопки
-  $powerOk = 0
-  $powerSecs = @()
-  for ($i = 1; $i -le $Tries; $i++) {
-    Go-Home
-    Sh 'input keyevent --longpress 26' | Out-Null
-    $r = Wait-AssistantWindow -Seconds 12
-    if ($r.Ok) { $powerOk++; $powerSecs += $r.Secs; Write-Host ("     питание, попытка {0}: открылся за {1} с" -f $i, $r.Secs) }
-    else { Write-Host ("     питание, попытка {0}: не открылся за {1} с" -f $i, $r.Secs) }
+  $w = Get-Wakefulness
+  $f = Get-FocusLine
+  Say-Dim ("экран: {0} | на экране: {1}" -f $w, $f)
+  if ($f -match 'keyguard|NotificationShade') {
+    Say-No "телефон заблокирован. Разблокируй его и запусти снова — со шторки замер не работает"
+    return
   }
 
-  # 2. жест от нижнего угла: именно он у ColorOS отдан помощнику (assist_gesture_enabled)
-  $size = Get-ScreenSize
-  $w = $size[0]; $h = $size[1]
-  $x1 = [int]($w * 0.03); $y1 = $h - 12
-  $x2 = [int]($w * 0.50); $y2 = [int]($h * 0.55)
-  $gestureOk = 0
-  $gestureSecs = @()
-  for ($i = 1; $i -le $Tries; $i++) {
-    Go-Home
-    Sh ("input swipe {0} {1} {2} {3} 300" -f $x1, $y1, $x2, $y2) | Out-Null
-    $r = Wait-AssistantWindow -Seconds 12
-    if ($r.Ok) { $gestureOk++; $gestureSecs += $r.Secs; Write-Host ("     жест, попытка {0}: открылся за {1} с" -f $i, $r.Secs) }
-    else { Write-Host ("     жест, попытка {0}: не открылся за {1} с" -f $i, $r.Secs) }
+  $results = @()
+  foreach ($how in @('power', 'gesture')) {
+    $title = 'питание'
+    if ($how -eq 'gesture') { $title = 'жест ' }
+    $okCount = 0
+    $secs = @()
+    for ($i = 1; $i -le $Tries; $i++) {
+      $r = Invoke-Attempt -How $how
+      if ($r.Locked) {
+        Say-No ("{0}, попытка {1}: телефон ушёл в блокировку — разблокируй и повтори" -f $title, $i)
+        $results += [pscustomobject]@{ How = $how; Ok = $false; Secs = 0 }
+        continue
+      }
+      if ($r.Ok) {
+        $okCount++
+        $secs += $r.Secs
+        $via = 'окно'
+        if ($r.Overlay) { $via = 'оверлей' }
+        if ($r.Focus) { $via = 'фокус' }
+        Write-Host ("     {0}, попытка {1}: ДА, {2} с ({3})" -f $title, $i, $r.Secs, $via) -ForegroundColor Green
+      } else {
+        $what = 'ничего'
+        if ($r.Seen.Count -gt 0) { $what = $r.Seen[$r.Seen.Count - 1] }
+        Write-Host ("     {0}, попытка {1}: нет. На экране: {2}" -f $title, $i, $what) -ForegroundColor Yellow
+      }
+      if ($r.Seen.Count -gt 1) { Say-Dim ("       фокус по ходу: " + ($r.Seen -join ' | ')) }
+      $results += [pscustomobject]@{ How = $how; Ok = $r.Ok; Secs = $r.Secs }
+    }
+
+    Write-Host ""
+    if ($okCount -gt 0) {
+      $avg = [math]::Round((($secs | Measure-Object -Average).Average), 1)
+      if ($how -eq 'power') { Say-Ok ("кнопка питания: {0} из {1}, среднее {2} с" -f $okCount, $Tries, $avg) }
+      else { Say-Ok ("жест от нижнего угла: {0} из {1}, среднее {2} с" -f $okCount, $Tries, $avg) }
+    } else {
+      if ($how -eq 'power') { Say-No ("кнопка питания: 0 из {0} — ColorOS не отдаёт удержание питания помощнику" -f $Tries) }
+      else { Say-No ("жест от нижнего угла: 0 из {0}" -f $Tries) }
+    }
   }
 
-  Write-Host ""
-  $avg = ''
-  if ($powerSecs.Count -gt 0) { $avg = " среднее " + [math]::Round((($powerSecs | Measure-Object -Average).Average), 1) + " с" }
-  if ($powerOk -gt 0) { Say-Ok ("кнопка питания: {0} из {1}{2}" -f $powerOk, $Tries, $avg) }
-  else { Say-No ("кнопка питания: 0 из {0} — ColorOS не отдаёт удержание питания помощнику" -f $Tries) }
-
-  $avg2 = ''
-  if ($gestureSecs.Count -gt 0) { $avg2 = " среднее " + [math]::Round((($gestureSecs | Measure-Object -Average).Average), 1) + " с" }
-  if ($gestureOk -gt 0) { Say-Ok ("жест от нижнего угла: {0} из {1}{2}" -f $gestureOk, $Tries, $avg2) }
-  else { Say-No ("жест от нижнего угла: 0 из {0}" -f $Tries) }
-
+  $powerOk = ($results | Where-Object { $_.How -eq 'power' -and $_.Ok }).Count
+  $gestureOk = ($results | Where-Object { $_.How -eq 'gesture' -and $_.Ok }).Count
   if ($powerOk -eq 0 -and $gestureOk -gt 0) {
     Say-Dim "Вывод: кнопка питания на этой прошивке помощнику не отдаётся, рабочий путь — жест."
   }
   if ($powerOk -eq 0 -and $gestureOk -eq 0) {
-    Say-Dim "Оба пути молчат: проверь руками — зажми питание на 2 с и смахни от нижнего угла."
-    Say-Dim "Если руками открывается, значит из shell запуск не проходит (docs 2.998)."
+    Say-Dim "Оба пути молчат. Проверь руками: зажми питание на 2 с и смахни от нижнего угла."
+    Say-Dim "Если руками открывается, а тут нет — значит из shell запуск не проходит (docs 2.998)."
   }
   if ($gestureOk -gt 0 -and $gestureOk -lt $Tries) {
-    Say-Dim "Жест срабатывает через раз: это холодный старт. Перезагрузи телефон (снимаем заморозку) и повтори -Test."
+    Say-Dim "Жест срабатывает через раз: это холодный старт. Перезагрузи телефон и повтори -Test."
   }
 }
 
