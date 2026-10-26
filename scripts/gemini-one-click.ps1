@@ -2,6 +2,7 @@
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gemini-one-click.ps1
 #   ... -Restore   вернуть кнопку в заводское состояние
+#   ... -Test      только замер: 5 попыток кнопкой питания и 5 жестом, с секундами
 #
 # Что делает сам:
 #   1. находит adb (PATH, winget-папка, кэш скрипта)
@@ -11,7 +12,8 @@
 #   5. снимает Breeno с кнопки питания и включает жест «удержание → помощник»
 #   6. включает постоянный VPN, если на телефоне есть Happ (иначе Gemini упирается в регион)
 #   7. убирает ColorOS-душилку для Google/Gemini/Happ
-#   8. сам «нажимает» кнопку и печатает вердикт: работает или почему нет
+#   8. замеряет, что реально открывает помощника: удержание питания и жест от
+#      нижнего угла, по 3 попытки, с секундами — без вранья в одну строку
 #
 # Чего НЕ делает (проверено на PKG110, ColorOS 16 — не работает из shell):
 #   * appops set — «uid 2000 does not have MANAGE_APP_OPS_MODES»
@@ -22,7 +24,8 @@
 param(
   [string]$Adb = "",
   [string]$Serial = "",
-  [switch]$Restore
+  [switch]$Restore,
+  [switch]$Test
 )
 
 $ErrorActionPreference = "Continue"
@@ -171,44 +174,91 @@ function Set-BackgroundStart {
   }
 }
 
-function Test-PowerButton {
-  Say-Step "Проверка кнопки: эмулирую долгое нажатие питания"
-  # KEYCODE_ASSIST (219) на ColorOS поднимает окно через раз, а один замер через
-  # фиксированную паузу врал. Удержание питания эмулируется как настоящее:
-  # input keyevent --longpress 26 идёт тем же путём в PhoneWindowManager,
-  # что и физическое нажатие, и будит экран.
-  Sh 'logcat -c' | Out-Null
-  Sh 'input keyevent --longpress 26' | Out-Null
+function Get-ScreenSize {
+  $raw = Sh 'wm size'
+  $m = [regex]::Match($raw, 'Override size:\s*(\d+)x(\d+)')
+  if (-not $m.Success) { $m = [regex]::Match($raw, 'Physical size:\s*(\d+)x(\d+)') }
+  if (-not $m.Success) { return @(1080, 2400) }
+  return @([int]$m.Groups[1].Value, [int]$m.Groups[2].Value)
+}
 
-  $focus = ''
+function Wait-AssistantWindow {
+  param([int]$Seconds = 12)
+  $sw = [Diagnostics.Stopwatch]::StartNew()
   $seen = @()
-  $secs = 0
-  for ($i = 0; $i -lt 40; $i++) {
-    Start-Sleep -Milliseconds 500
+  while ($sw.Elapsed.TotalSeconds -lt $Seconds) {
+    Start-Sleep -Milliseconds 600
     $win = Sh 'dumpsys window'
     $m = [regex]::Match($win, 'mCurrentFocus=Window\{[^}]*\}')
     if (-not $m.Success) { continue }
     $line = $m.Value -replace '\s+', ' '
     if ($seen -notcontains $line) { $seen += $line }
-    if ($line -match 'googlequicksearchbox|apps\.bard') { $focus = $line; $secs = ($i + 1) * 0.5; break }
-    if ($line -match 'globalactions') { $focus = $line; $secs = ($i + 1) * 0.5; break }
+    if ($line -match 'googlequicksearchbox|apps\.bard') {
+      return [pscustomobject]@{ Ok = $true; Secs = [math]::Round($sw.Elapsed.TotalSeconds, 1); Focus = $line; Seen = $seen }
+    }
+  }
+  $last = ''
+  if ($seen.Count -gt 0) { $last = $seen[$seen.Count - 1] }
+  return [pscustomobject]@{ Ok = $false; Secs = [math]::Round($sw.Elapsed.TotalSeconds, 1); Focus = $last; Seen = $seen }
+}
+
+function Go-Home {
+  Sh 'input keyevent 3' | Out-Null   # KEYCODE_HOME: убираем помощника с экрана
+  Start-Sleep -Milliseconds 700
+}
+
+function Test-Assistant {
+  param([int]$Tries = 3)
+
+  Say-Step "Замер: чем реально открывается помощник"
+  Say-Dim "телефон трогать не нужно, всё делается через adb"
+
+  # 1. удержание кнопки питания: тот же путь в PhoneWindowManager, что у физической кнопки
+  $powerOk = 0
+  $powerSecs = @()
+  for ($i = 1; $i -le $Tries; $i++) {
+    Go-Home
+    Sh 'input keyevent --longpress 26' | Out-Null
+    $r = Wait-AssistantWindow -Seconds 12
+    if ($r.Ok) { $powerOk++; $powerSecs += $r.Secs; Write-Host ("     питание, попытка {0}: открылся за {1} с" -f $i, $r.Secs) }
+    else { Write-Host ("     питание, попытка {0}: не открылся за {1} с" -f $i, $r.Secs) }
   }
 
-  if ($seen.Count -gt 1) { Say-Dim ("за время проверки в фокусе были: " + ($seen -join ' | ')) }
+  # 2. жест от нижнего угла: именно он у ColorOS отдан помощнику (assist_gesture_enabled)
+  $size = Get-ScreenSize
+  $w = $size[0]; $h = $size[1]
+  $x1 = [int]($w * 0.03); $y1 = $h - 12
+  $x2 = [int]($w * 0.50); $y2 = [int]($h * 0.55)
+  $gestureOk = 0
+  $gestureSecs = @()
+  for ($i = 1; $i -le $Tries; $i++) {
+    Go-Home
+    Sh ("input swipe {0} {1} {2} {3} 300" -f $x1, $y1, $x2, $y2) | Out-Null
+    $r = Wait-AssistantWindow -Seconds 12
+    if ($r.Ok) { $gestureOk++; $gestureSecs += $r.Secs; Write-Host ("     жест, попытка {0}: открылся за {1} с" -f $i, $r.Secs) }
+    else { Write-Host ("     жест, попытка {0}: не открылся за {1} с" -f $i, $r.Secs) }
+  }
 
-  if ($focus -match 'googlequicksearchbox|apps\.bard') {
-    Say-Ok ("РАБОТАЕТ: помощник открылся через " + $secs + " с")
-    if ($secs -gt 5) {
-      Say-Dim "медленно: похоже на заморозку фоновых приложений или на холодный старт через VPN"
-    }
-    Say-Dim "Теперь зажми кнопку питания на телефоне на 2 секунды — должен открыться Gemini."
-  } elseif ($focus -match 'globalactions') {
-    Say-No "открылось меню выключения — прошивка не отдаёт кнопку помощнику"
-    Say-Dim "Держи нижнюю полосу жестов: assist_long_press_home_enabled=1 и key_home_long_press_action=2 уже стоят."
-  } else {
-    Say-No "за 20 секунд окно помощника не появилось"
-    Say-Dim "Это не приговор кнопке: проверь руками — зажми питание на 2 с и полосу жестов."
-    Say-Dim "Если руками открывается, а программно нет — на этой прошивке система не пускает запуск из shell."
+  Write-Host ""
+  $avg = ''
+  if ($powerSecs.Count -gt 0) { $avg = " среднее " + [math]::Round((($powerSecs | Measure-Object -Average).Average), 1) + " с" }
+  if ($powerOk -gt 0) { Say-Ok ("кнопка питания: {0} из {1}{2}" -f $powerOk, $Tries, $avg) }
+  else { Say-No ("кнопка питания: 0 из {0} — ColorOS не отдаёт удержание питания помощнику" -f $Tries) }
+
+  $avg2 = ''
+  if ($gestureSecs.Count -gt 0) { $avg2 = " среднее " + [math]::Round((($gestureSecs | Measure-Object -Average).Average), 1) + " с" }
+  if ($gestureOk -gt 0) { Say-Ok ("жест от нижнего угла: {0} из {1}{2}" -f $gestureOk, $Tries, $avg2) }
+  else { Say-No ("жест от нижнего угла: 0 из {0}" -f $Tries) }
+
+  if ($powerOk -eq 0 -and $gestureOk -gt 0) {
+    Say-Dim "Вывод: кнопка питания на этой прошивке помощнику не отдаётся, рабочий путь — жест."
+  }
+  if ($powerOk -eq 0 -and $gestureOk -eq 0) {
+    Say-Dim "Оба пути молчат: проверь руками — зажми питание на 2 с и смахни от нижнего угла."
+    Say-Dim "Если руками открывается, значит из shell запуск не проходит (docs 2.998)."
+  }
+  if ($gestureOk -gt 0 -and $gestureOk -lt $Tries) {
+    Say-Dim "Жест срабатывает через раз: это холодный старт. Перезагрузи телефон (снимаем заморозку) и повтори -Test."
   }
 }
 
@@ -246,6 +296,14 @@ if ($Restore) {
   exit 0
 }
 
+if ($Test) {
+  # только замер, настройки не трогаем: 5 попыток кнопкой и 5 жестом
+  Test-Assistant -Tries 5
+  Write-Host ""
+  Read-Host "Enter — закрыть"
+  exit 0
+}
+
 Say-Step "Проверяю Google"
 $gpath = Sh "pm path $GooglePkg"
 if ($gpath -notmatch 'package:') {
@@ -264,7 +322,7 @@ Set-AppRetention
 Set-LockScreenPlayer
 Set-BackgroundStart
 
-Test-PowerButton
+Test-Assistant
 
 Write-Host ""
 Say-Dim "Откат: эта же команда с ключом -Restore"

@@ -319,7 +319,9 @@ test('одноклик: сам находит помощника, снимает
   assert.ok(src.includes('settings --user 0 put secure assistant'), 'помощника надо назначать');
   assert.ok(src.includes('speech_assist_power_wakeup 0'), 'Breeno должен сниматься с кнопки');
   assert.ok(src.includes('assist_gesture_enabled 1'), 'жест удержания питания надо включать');
-  assert.ok(src.includes('KEYCODE_ASSIST'), 'нужна самопроверка нажатием');
+  // самопроверка идёт удержанием питания, а не KEYCODE_ASSIST: тот на ColorOS врёт (docs 2.998)
+  assert.ok(src.includes('input keyevent --longpress 26'), 'нужна самопроверка удержанием питания');
+  assert.ok(!/KEYCODE_ASSIST/.test(src), 'KEYCODE_ASSIST больше не используется');
   assert.ok(src.includes('mCurrentFocus'), 'вердикт должен читаться с экрана');
   // на ColorOS shell не имеет права менять appops — не пытаемся
   assert.ok(!/cmd appops set/.test(src), 'appops из shell на этой прошивке запрещён');
@@ -337,7 +339,10 @@ test('плеер на локскрине и AOSP-ключи кнопки заш�
   assert.ok(src.includes('key_home_long_press_action 2'), 'AOSP-код 2 = помощник по долгому нажатию Home');
   // проверка кнопки больше не делает один замер через фиксированную паузу
   assert.ok(!/Start-Sleep -Seconds 5/.test(src), 'один замер через 5 секунд врал — нужен опрос');
-  assert.ok(/for \(\$i = 0; \$i -lt \d+; \$i\+\+\)/.test(src), 'фокус надо опрашивать несколько раз');
+  assert.ok(/for \(\$i = 1; \$i -le \$Tries; \$i\+\+\)/.test(src), 'каждый путь проверяется несколько раз');
+  assert.ok(src.includes("input swipe"), 'жест от нижнего угла проверяется реальным свайпом');
+  assert.ok(src.includes('[switch]$Test'), 'нужен режим -Test: только замер, без изменения настроек');
+  assert.ok(src.includes('Wait-AssistantWindow'), 'ожидание окна вынесено в отдельную функцию с таймаутом');
   // KEYCODE_ASSIST на ColorOS поднимает окно через раз: эмулируем именно удержание питания
   assert.ok(src.includes('input keyevent --longpress 26'), 'проверка должна имитировать удержание кнопки питания');
   assert.ok(!src.includes("input keyevent KEYCODE_ASSIST' | Out-Null"), 'KEYCODE_ASSIST больше не единственная проверка');
