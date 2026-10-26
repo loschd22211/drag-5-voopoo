@@ -205,19 +205,20 @@ $r1 = Test-PressForAssistant -Hint "зажми полосу (пакет откл
 if ($r1.Gemini) { $found = 'отключён' }
 
 if (-not $found) {
-  Sh ("pm uninstall --user 0 " + $pkg) | Out-Null
-  $r2 = Test-PressForAssistant -Hint "зажми полосу (пакет снят для пользователя)"
-  if ($r2.Gemini) { $found = 'снят' }
+  # Пакет не удаляем: suspend снимается одной командой unsuspend.
+  Sh ("pm suspend --user 0 " + $pkg) | Out-Null
+  $r2 = Test-PressForAssistant -Hint "зажми полосу (пакет приостановлен)"
+  if ($r2.Gemini) { $found = 'приостановлен' }
 }
 
 Write-Host ""
 if ($found -ne '') {
   Write-Ok ("Работает: жест открывает Google, пакет " + $found)
-  Write-Dim ("вернуть Breeno: cmd package install-existing --user 0 " + $pkg)
+  Write-Dim ("вернуть Breeno: pm unsuspend --user 0 " + $pkg + " ; pm enable --user 0 " + $pkg)
 } else {
   Write-Warn "Даже без этого пакета Google по жесту не открывается"
   Write-Dim "Значит SystemUI рома просто проглатывает жест, на роль ASSISTANT он не падает"
-  Write-Dim ("пакет оставил отключённым, чтобы не видеть «страница недоступна»; вернуть: cmd package install-existing --user 0 " + $pkg)
+  Write-Dim ("пакет оставил приостановленным, чтобы не видеть «страница недоступна»; вернуть: pm unsuspend --user 0 " + $pkg)
 }
 
 Write-Host ""
