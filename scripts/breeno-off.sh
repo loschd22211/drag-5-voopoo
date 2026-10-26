@@ -1,0 +1,237 @@
+#!/usr/bin/env bash
+# Снимает фирменный ассистент Breeno (он же HeyTap speech assist), который перехватывает
+# долгое нажатие кнопки питания на ColorOS. Обратимо, без root.
+#
+#   bash scripts/breeno-off.sh                 # снять голосовой ассистент + экран ассистента
+#   bash scripts/breeno-off.sh --all           # ещё и AI-движок OPPO (нужен другим функциям!)
+#   bash scripts/breeno-off.sh --uninstall     # для защищённых пакетов: uninstall --user 0
+#   bash scripts/breeno-off.sh --restore       # вернуть всё как было
+#   bash scripts/breeno-off.sh --yes           # без подтверждений
+#
+# На ColorOS 16 пакета com.oplus.breeno нет: Breeno разложен на части —
+#   com.heytap.speechassist        голосовой ассистент
+#   com.coloros.assistantscreen    экран ассистента
+#   com.oplus.aiunit / com.aiunit.aon   AI-движок (может быть нужен галерее, переводу и т.п.)
+
+set -u
+
+C_OK=$'\033[32m'; C_WARN=$'\033[33m'; C_ERR=$'\033[31m'; C_B=$'\033[1m'; C_DIM=$'\033[2m'; C_OFF=$'\033[0m'
+ok()   { printf '%s✔%s %s\n' "$C_OK" "$C_OFF" "$*"; }
+warn() { printf '%s!%s %s\n' "$C_WARN" "$C_OFF" "$*"; }
+err()  { printf '%s✘%s %s\n' "$C_ERR" "$C_OFF" "$*"; }
+step() { printf '\n%s▸ %s%s\n' "$C_B" "$*" "$C_OFF"; }
+dim()  { printf '%s%s%s\n' "$C_DIM" "$*" "$C_OFF"; }
+die()  { err "$*"; exit 1; }
+
+RESTORE=0; ASSUME_YES=0; UNINSTALL=0; INCLUDE_ENGINE=0
+for arg in "$@"; do
+  case "$arg" in
+    --restore) RESTORE=1 ;;
+    --yes|-y) ASSUME_YES=1 ;;
+    --uninstall) UNINSTALL=1 ;;
+    --all) INCLUDE_ENGINE=1 ;;
+  esac
+done
+
+VENDOR_RE='breeno|heytap\.speechassist|voiceassist|speechassist|assistantscreen|aiunit'
+# даже если пакет скрыт для пользователя и не виден в pm list packages
+KNOWN_VENDOR='com.heytap.speechassist com.coloros.assistantscreen com.oplus.aiunit com.aiunit.aon com.oplus.breeno'
+DENY_RE='com\.oplus\.ocs$|coloros\.ota'
+
+ADB_BIN="${ADB:-adb}"
+command -v "$ADB_BIN" >/dev/null 2>&1 || die "adb не найден. Сначала запусти scripts/oneclick.sh"
+
+SERIAL=$("$ADB_BIN" devices | awk 'NR>1 && $2=="device" {print $1; exit}')
+[ -n "$SERIAL" ] || die "телефон не виден: проверь кабель и «Отладку по USB»"
+ok "телефон: $SERIAL"
+
+sh_() { "$ADB_BIN" -s "$SERIAL" shell "$1" 2>&1 | tr -d '\r'; }
+
+# фактическое состояние: текст ответа врёт, состояние — нет
+is_blocked() {
+  local pkg="$1"
+  local dis inst dump
+  dis=$(sh_ 'pm list packages -d')
+  inst=$(sh_ 'pm list packages --user 0')
+  dump=$(sh_ "dumpsys package $pkg")
+  printf '%s\n' "$dis" | grep -qx "package:$pkg" && return 0
+  printf '%s\n' "$inst" | grep -qx "package:$pkg" || return 0
+  printf '%s' "$dump" | grep -q 'suspended=true' && return 0
+  printf '%s' "$dump" | grep -q 'hidden=true' && return 0
+  return 1
+}
+
+# лестница: disable-user -> suspend -> hide -> uninstall --user 0
+block_package() {
+  local pkg="$1" out mode
+  for mode in disable-user suspend hide uninstall; do
+    case "$mode" in
+      disable-user) out=$(sh_ "pm disable-user --user 0 $pkg") ;;
+      suspend)      out=$(sh_ "pm suspend --user 0 $pkg") ;;
+      hide)         out=$(sh_ "pm hide $pkg") ;;
+      uninstall)    out=$(sh_ "pm uninstall --user 0 $pkg") ;;
+    esac
+    if is_blocked "$pkg"; then
+      BLOCKED_BY="$mode"
+      return 0
+    fi
+    dim "    $mode: $(printf '%s' "$out" | head -1)"
+  done
+  BLOCKED_BY=""
+  return 1
+}
+
+unblock_package() {
+  local pkg="$1"
+  sh_ "pm unsuspend --user 0 $pkg" >/dev/null 2>&1
+  sh_ "pm unhide $pkg" >/dev/null 2>&1
+  sh_ "pm enable $pkg" >/dev/null 2>&1
+  sh_ "cmd package install-existing $pkg" >/dev/null 2>&1
+  ! is_blocked "$pkg"
+}
+
+classify() {
+  case "$1" in
+    *speechassist*|*breeno*|*voiceassist*) echo "voice" ;;
+    *assistantscreen*) echo "screen" ;;
+    *aiunit*) echo "engine" ;;
+    *) echo "other" ;;
+  esac
+}
+
+human_role() {
+  case "$1" in
+    voice) echo "голосовой ассистент Breeno" ;;
+    screen) echo "экран ассистента Breeno" ;;
+    engine) echo "AI-движок OPPO (риск: нужен другим функциям)" ;;
+    *) echo "фирменный ассистент" ;;
+  esac
+}
+
+step "Смотрю, что установлено"
+installed=$(sh_ 'pm list packages --user 0')
+disabled=$(sh_ 'pm list packages -d')
+
+CANDIDATES=()
+for pkg in $(printf '%s\n' "$installed" | sed -n 's/^package://p'); do
+  printf '%s' "$pkg" | grep -qEi "$VENDOR_RE" || continue
+  printf '%s' "$pkg" | grep -qEi "$DENY_RE" && continue
+  CANDIDATES+=("$pkg")
+done
+# добавим уже отключённые, чтобы --restore их тоже видел
+for pkg in $(printf '%s\n' "$disabled" | sed -n 's/^package://p'); do
+  printf '%s' "$pkg" | grep -qEi "$VENDOR_RE" || continue
+  case " ${CANDIDATES[*]:-} " in *" $pkg "*) ;; *) CANDIDATES+=("$pkg") ;; esac
+done
+# при восстановлении проверяем ещё и известные имена: скрытые для пользователя пакеты
+# не видны ни в pm list packages --user 0, ни в pm list packages -d
+if [ "$RESTORE" -eq 1 ]; then
+  for pkg in $KNOWN_VENDOR; do
+    case " ${CANDIDATES[*]:-} " in *" $pkg "*) ;; *) CANDIDATES+=("$pkg") ;; esac
+  done
+fi
+
+if [ ${#CANDIDATES[@]} -eq 0 ]; then
+  ok "фирменных ассистентов не найдено"
+  dim "тогда смотри docs/coloros-cn-notes.md, раздел про Activity Launcher"
+  exit 0
+fi
+
+for pkg in "${CANDIDATES[@]}"; do
+  role=$(classify "$pkg")
+  state="включён"
+  printf '%s\n' "$disabled" | grep -qx "package:$pkg" && state="отключён"
+  printf '%s\n' "$installed" | grep -qx "package:$pkg" || state="скрыт для пользователя"
+  printf '  %-34s %-28s %s\n' "$pkg" "$(human_role "$role")" "$state"
+done
+
+step "Текущий помощник"
+cur=$(sh_ 'settings get secure assistant')
+dim "assistant: $cur"
+printf '%s' "$cur" | grep -q 'com\.google' && ok "Google назначен помощником" \
+  || warn "помощник не Google — сначала запусти scripts/oneclick.sh"
+
+# ------------------------------------------------------------------ restore
+
+if [ "$RESTORE" -eq 1 ]; then
+  step "Возвращаю фирменные ассистенты"
+  for pkg in "${CANDIDATES[@]}"; do
+    if ! printf '%s\n' "$installed" | grep -qx "package:$pkg"; then
+      dim "$pkg: на этой сборке нет — пропускаю"
+      continue
+    fi
+    if unblock_package "$pkg"; then
+      ok "$pkg включён (снял suspend/hidden/enable)"
+    else
+      warn "$pkg не удалось вернуть — проверь вручную: pm enable $pkg"
+    fi
+  done
+  dim "Проверь: долгое нажатие снова откроет Breeno."
+  exit 0
+fi
+
+# ------------------------------------------------------------------ disable
+
+TARGETS=()
+for pkg in "${CANDIDATES[@]}"; do
+  role=$(classify "$pkg")
+  printf '%s\n' "$installed" | grep -qx "package:$pkg" || continue
+  printf '%s\n' "$disabled" | grep -qx "package:$pkg" && continue
+  if [ "$role" = "engine" ] && [ "$INCLUDE_ENGINE" -eq 0 ]; then
+    dim "пропускаю $pkg (AI-движок; включить в работу: --all)"
+    continue
+  fi
+  TARGETS+=("$pkg")
+done
+
+if [ ${#TARGETS[@]} -eq 0 ]; then
+  ok "нечего отключать — всё уже снято"
+  dim "если кнопка всё ещё открывает Breeno, попробуй: --all"
+  exit 0
+fi
+
+step "Отключаю: ${TARGETS[*]}"
+dim "Обратимо, без root. Вернуть: bash scripts/breeno-off.sh --restore"
+if [ "$ASSUME_YES" -eq 0 ]; then
+  read -r -p "Продолжить? [y/N] " answer
+  case "$answer" in y|Y|д|Д|да|ДА) ;; *) die "отменено" ;; esac
+fi
+
+FAILED=()
+for pkg in "${TARGETS[@]}"; do
+  dim "$pkg:"
+  if block_package "$pkg"; then
+    ok "$pkg заблокирован (способ: $BLOCKED_BY)"
+  else
+    warn "$pkg не поддался ни одному способу"
+    FAILED+=("$pkg")
+  fi
+done
+
+step "Проверяю результат"
+REALLY_FAILED=()
+for pkg in "${TARGETS[@]}"; do
+  if is_blocked "$pkg"; then
+    ok "$pkg заблокирован"
+  else
+    warn "$pkg всё ещё активен"
+    REALLY_FAILED+=("$pkg")
+  fi
+done
+
+step "Пробую запустить ассистента"
+probe=$(sh_ 'am start -a android.intent.action.VOICE_COMMAND')
+printf '%s' "$probe" | grep -qiE 'error|unable to resolve' \
+  && warn "не запустился: $probe" \
+  || ok "команда запуска ушла — глянь на экран телефона"
+
+printf '\n%s— Готово —%s\n' "$C_B" "$C_OFF"
+if [ ${#REALLY_FAILED[@]} -eq 0 ]; then
+  ok "Breeno снят. Зажми кнопку питания на 0,5 секунды."
+  dim "Если кнопка теперь открывает меню выключения, а не Gemini — прогони scripts/oneclick.sh"
+else
+  warn "Прошивка не дала снять: ${REALLY_FAILED[*]}"
+  dim "Перебрал disable-user, suspend, hide и uninstall — прошивка не дала."
+  dim "Дальше только Activity Launcher (assistantguidedialog) или root."
+fi
+dim "Вернуть как было: bash scripts/breeno-off.sh --restore"

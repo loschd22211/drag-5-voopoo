@@ -21,6 +21,10 @@
 
 **Windows:** двойной клик по `scripts\oneclick.cmd`
 
+> Если PowerShell выдаёт ошибки парсера и кракозябры (`РЅРµ РЅР°Р№РґРµРЅ`) — это кодировка,
+> а не логика: файл `.ps1` должен быть в UTF-8 **с BOM**. Лечение в одну команду —
+> [`docs/windows-encoding.md`](docs/windows-encoding.md).
+
 **Linux / macOS:**
 
 ```bash
@@ -99,6 +103,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir.FullName 'sc
 | `tools/mock-adb` | Фейковый adb: демо-режим без телефона, на нём же гоняются тесты |
 | `test/smoke.js` | 13 проверок логики без реального устройства |
 | `docs/coloros-cn-notes.md` | Что делать, если прошивка блокирует настройку (китайские сборки) |
+| `docs/windows-encoding.md` | Если PowerShell ругается на «отсутствует `}`» и показывает кракозябры |
+| `scripts/breeno-off.sh` / `breeno-off.ps1` | Снять фирменный Breeno, который перехватывает кнопку (обратимо) |
 
 ---
 
@@ -220,6 +226,7 @@ adb shell settings delete secure voice_interaction_service
 | Симптом | Причина | Что делать |
 | --- | --- | --- |
 | Назначение «не применилось» (значение вернулось) | прошивка защищает `Settings.Secure` от записи через adb | открыть экран «Power button» из шага 5 и переключить руками + `docs/coloros-cn-notes.md` |
+| Значение записалось, но кнопка открывает Breeno | Breeno ставит свой обработчик клавиши поверх роли помощника | `scripts/breeno-off.sh` / `breeno-off.ps1`: перебирают `disable-user → suspend → hide → uninstall` и проверяют результат по `dumpsys`. На ColorOS 16 обычно срабатывает `suspend` |
 | Значение записалось, но кнопка всё равно открывает меню питания | системный обработчик кнопки игнорирует помощника | `docs/coloros-cn-notes.md`, раздел «Activity Launcher / MiCTS» |
 | Gemini открывается, но не слушает микрофон | нет разрешения | шаг 4 → «Выдать микрофон Gemini» |
 | «Окей, Google» не работает вообще | на китайских сборках часто нет нужной системной библиотеки | кнопка будет работать, голосовая активация — нет; это ограничение прошивки |

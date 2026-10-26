@@ -1,4 +1,4 @@
-# CLI-версия для Windows (PowerShell 5.1+).
+﻿# CLI-версия для Windows (PowerShell 5.1+).
 #
 #   .\scripts\adb-gemini.ps1
 #   .\scripts\adb-gemini.ps1 -Serial R5CT12345678

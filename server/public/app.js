@@ -8,6 +8,7 @@ const state = {
   serial: null,
   diagnosis: null,
   lastSnapshot: null,
+  vendor: null,
   log: [],
 };
 
@@ -198,21 +199,30 @@ function renderDiagnosis(d) {
     power.innerHTML =
       '<div class="hint warn">Не нашёл активности с «power/button» в названии. Открой настройки вручную: «Доступность и удобство → Кнопка питания».</div>';
   } else {
+    const useful = items.filter((a) => a.score >= 0);
+    const junk = items.filter((a) => a.score < 0);
+    const row = (a, first) => `<tr>
+      <td>${first ? '<span class="pill ok">начать здесь</span> ' : ''}${esc(a.label)}</td>
+      <td class="muted small">${esc(a.hint || '')}</td>
+      <td><code>${esc(a.component)}</code></td>
+      <td><button class="btn tiny" data-open-component="${esc(a.component)}">Открыть</button></td>
+    </tr>`;
     power.innerHTML = `
       <table>
-        <thead><tr><th>Экран</th><th>Компонент</th><th></th></tr></thead>
-        <tbody>
-          ${items
-            .map(
-              (a) => `<tr>
-                <td>${esc(a.label)}</td>
-                <td><code>${esc(a.component)}</code></td>
-                <td><button class="btn tiny" data-open-component="${esc(a.component)}">Открыть</button></td>
-              </tr>`,
-            )
-            .join('')}
-        </tbody>
-      </table>`;
+        <thead><tr><th>Экран</th><th>Что это</th><th>Компонент</th><th></th></tr></thead>
+        <tbody>${useful.map((a, i) => row(a, i === 0)).join('')}</tbody>
+      </table>
+      ${
+        junk.length
+          ? `<details class="wifi"><summary>Ещё найдено, но к кнопке питания не относится (${junk.length})</summary>
+             <table><tbody>${junk
+               .map(
+                 (a) => `<tr><td class="muted small">${esc(a.label)}</td><td><code>${esc(a.component)}</code></td>
+                 <td><button class="btn tiny" data-open-component="${esc(a.component)}">Открыть</button></td></tr>`,
+               )
+               .join('')}</tbody></table></details>`
+          : ''
+      }`;
   }
 
   const google = d.googleSettingsActivities || [];
@@ -303,6 +313,130 @@ async function simple(route, payload, label, targetEl) {
   el.innerHTML = `<div class="hint ${data.ok ? 'ok' : 'warn'}">${esc(label)}: ${data.ok ? 'ок' : 'не удалось'}</div>
     ${data.out ? `<pre class="log small">${esc(data.out)}</pre>` : ''}`;
   log(`${label}: ${data.ok ? 'ок' : 'ошибка'}`);
+}
+
+// ---------------------------------------------------------------------------
+// фирменные ассистенты (Breeno)
+// ---------------------------------------------------------------------------
+
+function renderVendor(data) {
+  const el = $('#vendorOut');
+  if (!data.ok) {
+    el.innerHTML = `<div class="hint error">${esc(data.error || 'не удалось получить список')}</div>`;
+    return;
+  }
+  if (!data.packages.length) {
+    el.innerHTML = '<div class="hint ok">Фирменных ассистентов не найдено — Breeno на этом устройстве нет.</div>';
+    return;
+  }
+  el.innerHTML = `
+    <table>
+      <thead><tr><th>Пакет</th><th>Тип</th><th>Состояние</th></tr></thead>
+      <tbody>
+        ${data.packages
+          .map(
+            (p) => `<tr>
+              <td><code>${esc(p.package)}</code></td>
+              <td class="muted small">${esc(p.kind)}${p.protected ? ' · защищён, не трогаю' : ''}${
+                p.risk === 'caution' ? ' · <span class="pill skip">с осторожностью</span>' : ''
+              }</td>
+              <td>${
+                p.disabled
+                  ? '<span class="pill no">отключён</span>'
+                  : '<span class="pill ok">включён</span>'
+              }</td>
+            </tr>`,
+          )
+          .join('')}
+      </tbody>
+    </table>
+    <p class="muted small">Отключение действует для текущего пользователя и снимается кнопкой «Вернуть всё обратно».</p>`;
+}
+
+async function vendorList() {
+  const data = await api('/api/vendor', { serial: state.serial });
+  state.vendor = data;
+  renderVendor(data);
+  if (data.ok) log(`фирменные ассистенты: ${data.packages.map((p) => p.package).join(', ') || 'нет'}`);
+}
+
+function vendorTargets({ includeRisky = false } = {}) {
+  const packages = (state.vendor && state.vendor.packages) || [];
+  return packages
+    .filter((p) => !p.protected)
+    .filter((p) => includeRisky || p.risk === 'safe')
+    .map((p) => p.package);
+}
+
+async function vendorDisable({ uninstallForCurrentUser = false } = {}) {
+  if (!state.vendor) await vendorList();
+  const targets = vendorTargets();
+  if (!targets.length) {
+    $('#vendorOut').innerHTML =
+      '<div class="hint warn">Нечего отключать: голосовых пакетов Breeno не найдено. Попробуй «Вернуть всё обратно», затем снова «Снять Breeno».</div>';
+    return;
+  }
+  if (!targets.length) {
+    $('#vendorOut').innerHTML =
+      '<div class="hint warn">Нечего отключать: фирменных ассистентов не найдено или они защищены.</div>';
+    return;
+  }
+  const data = await api('/api/vendor/disable', {
+    serial: state.serial,
+    packages: targets,
+    uninstallForCurrentUser,
+  });
+  const ok = data.verified || [];
+  const failed = (data.steps || []).filter((s) => !s.ok);
+  const hintText = data.ok
+    ? 'Готово. Зажми кнопку питания — должен открыться Gemini.'
+    : uninstallForCurrentUser
+      ? 'Даже скрытие не сработало — прошивка защищает пакет. Дальше только Activity Launcher или root.'
+      : 'Часть пакетов защищена прошивкой: нажми «Жёстче: скрыть для пользователя».';
+  $('#vendorOut').innerHTML = `
+    <div class="hint ${data.ok ? 'ok' : 'warn'}">
+      ${hintText}
+    </div>
+    <table>
+      <tr><th>заблокировано</th><td>${ok.length ? esc(ok.join(', ')) : '—'}</td></tr>
+      <tr><th>способ</th><td>${
+        esc(
+          (data.results || [])
+            .filter((r) => r.workedMode)
+            .map((r) => `${r.package}: ${r.workedMode}`)
+            .join(', ') || '—',
+        )
+      }</td></tr>
+      ${
+        (data.results || []).some((r) => !r.blocked)
+          ? `<tr><th>не поддались</th><td>${esc(
+              (data.results || [])
+                .filter((r) => !r.blocked)
+                .map(
+                  (r) =>
+                    `${r.package}: ${(r.attempts || [])
+                      .map((a) => `${a.mode} → ${a.refuseReason || 'отказ'}`)
+                      .join('; ')}`,
+                )
+                .join(' | '),
+            )}</td></tr>`
+          : ''
+      }
+    </table>
+    <p class="muted small">Вернуть обратно — кнопка «Вернуть всё обратно».</p>`;
+  log(`снятие Breeno: ${data.ok ? 'ок' : 'частично'}`);
+  await vendorList();
+}
+
+async function vendorEnable() {
+  if (!state.vendor) await vendorList();
+  const targets = ((state.vendor && state.vendor.packages) || []).map((p) => p.package);
+  if (!targets.length) return;
+  const data = await api('/api/vendor/enable', { serial: state.serial, packages: targets });
+  $('#vendorOut').innerHTML = `<div class="hint ${data.ok ? 'ok' : 'warn'}">
+    ${data.ok ? 'Всё включено обратно.' : `Не удалось вернуть: ${esc((data.stillDisabled || []).join(', '))}`}</div>`;
+  log('возврат фирменных ассистентов выполнен');
+  await vendorList();
 }
 
 // ---------------------------------------------------------------------------
@@ -433,6 +567,10 @@ async function init() {
         else if (action === 'test-assist') await testAssist();
         else if (action === 'grant-mic') await simple('/api/grant-mic', { package: 'com.google.android.apps.bard' }, 'микрофон Gemini', '#checkOut');
         else if (action === 'battery') await simple('/api/battery', {}, 'оптимизация батареи', '#checkOut');
+        else if (action === 'vendor-list') await vendorList();
+        else if (action === 'vendor-disable') await vendorDisable();
+        else if (action === 'vendor-uninstall') await vendorDisable({ uninstallForCurrentUser: true });
+        else if (action === 'vendor-enable') await vendorEnable();
         else if (action === 'snapshot') await snapshot();
         else if (action === 'diff') await diff();
         else if (action === 'export-report') exportReport();

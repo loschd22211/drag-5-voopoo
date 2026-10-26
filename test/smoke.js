@@ -70,10 +70,18 @@ test('диагностика находит Google-пакеты и экраны 
   const report = await adb.diagnose('MOCK000ACE5');
   assert.equal(report.ok, true);
   assert.equal(report.device.model, 'PKG110');
-  assert.equal(report.device.android, '15');
+  assert.equal(report.device.android, '16');
   assert.equal(report.packages.googleApp.installed, true);
   assert.equal(report.packages.gemini.installed, true);
-  assert.ok(report.powerActivities.some((a) => /PowerButton/i.test(a.component)), 'нет экрана кнопки питания');
+  assert.ok(
+    report.powerActivities.some((a) => /PowerMenuSettingsActivity/.test(a.component)),
+    'нет экрана долгого нажатия кнопки питания',
+  );
+  assert.equal(
+    report.recommendedPowerActivity,
+    'com.android.settings/.Settings$PowerMenuSettingsActivity',
+    'рекомендация должна указывать на экран кнопки питания, а не на «расход батареи»',
+  );
   assert.ok(report.googleSettingsActivities.length >= 1, 'нет Google-экрана в настройках');
   assert.ok(report.voiceServices.some((s) => /GsaVoiceInteractionService/.test(s.component)));
   assert.ok(report.suggestedAssistantComponent.startsWith('com.google.'));
@@ -98,7 +106,7 @@ test('открытие экрана настроек по компоненту',
   const res = await adb.openTarget(
     'MOCK000ACE5',
     'component',
-    'com.oplus.settings/.OplusPowerButtonSettingsActivity',
+    'com.android.settings/.Settings$PowerMenuSettingsActivity',
   );
   assert.equal(res.ok, true);
 });
@@ -124,6 +132,108 @@ test('снимок настроек и дифф ловят изменение', 
 test('защита от мусорного компонента', async () => {
   const res = await adb.setAssistant('MOCK000ACE5', 'bad value with spaces;rm -rf');
   assert.equal(res.ok, false);
+});
+
+
+test('ранжирование: реальный список с Ace 5 (ColorOS 16)', () => {
+  const raw = [
+    '.fuelgauge.AdvancedPowerUsageDetailActivity',
+    '.Settings$ButtonNavigationSettingsActivity',
+    '.Settings$DoubleTapPowerSettingsActivity',
+    '.Settings$ManageAssistActivity',
+    '.Settings$NotificationAssistantSettingsActivity',
+    '.Settings$PowerMenuSettingsActivity',
+    '.Settings$PowerUsageAdvancedActivity',
+    'com.oplus.settings.feature.convenient.PowerWakeUpGuideActivity',
+    'com.oplus.settings.feature.onehanded.OneHandedOAssistService',
+    'com.oplus.settings.feature.othersettings.timepower.TimePowerReceiver',
+    'com.oplus.settings.feature.speechassistant.SettingsSpeechAssistantActivity',
+  ].map((cls) => ({ component: `com.android.settings/${cls}`, activity: cls, label: cls }));
+  const ranked = _internal.rankPowerActivities(raw);
+  assert.equal(ranked[0].activity, '.Settings$PowerMenuSettingsActivity');
+  assert.ok(ranked[0].score >= 80);
+  assert.equal(ranked[1].activity, '.Settings$ManageAssistActivity');
+  const junk = ranked.find((a) => /fuelgauge/.test(a.activity));
+  assert.ok(junk.score < 0, '«расход батареи» должен уходить в конец');
+  assert.ok(ranked[ranked.length - 1].score < 0, 'мусор должен быть в конце списка');
+});
+
+test('PowerShell-скрипты сохранены в UTF-8 с BOM (иначе PS 5.1 ломает кириллицу)', () => {
+  const files = ['oneclick.ps1', 'adb-gemini.ps1'];
+  for (const name of files) {
+    const buf = fs.readFileSync(path.join(__dirname, '..', 'scripts', name));
+    assert.ok(
+      buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf,
+      `${name}: нет BOM — Windows PowerShell 5.1 прочитает файл как ANSI и упадёт с ошибками парсера`,
+    );
+  }
+});
+
+test('фирменные ассистенты: находит части Breeno на ColorOS 16', async () => {
+  const res = await adb.listVendorAssistants('MOCK000ACE5');
+  assert.equal(res.ok, true);
+  const names = res.packages.map((p) => p.package);
+  for (const expected of ['com.heytap.speechassist', 'com.coloros.assistantscreen', 'com.oplus.aiunit']) {
+    assert.ok(names.includes(expected), `${expected} должен быть в списке`);
+  }
+  assert.ok(!names.includes('com.oplus.ocs'), 'com.oplus.ocs — не ассистент, его нельзя предлагать');
+  const voice = res.packages.find((p) => p.package === 'com.heytap.speechassist');
+  assert.equal(voice.role, 'voice');
+  assert.equal(voice.risk, 'safe');
+  const engine = res.packages.find((p) => p.package === 'com.oplus.aiunit');
+  assert.equal(engine.risk, 'caution', 'AI-движок должен помечаться как рискованный');
+});
+
+test('голосовой пакет Breeno отключается и включается обратно', async () => {
+  const off = await adb.disablePackages('MOCK000ACE5', ['com.heytap.speechassist']);
+  assert.equal(off.ok, true, 'не удалось отключить голосовой пакет');
+  assert.deepEqual(off.verified, ['com.heytap.speechassist']);
+
+  const listed = await adb.listVendorAssistants('MOCK000ACE5');
+  assert.equal(listed.packages.find((p) => p.package === 'com.heytap.speechassist').disabled, true);
+
+  const on = await adb.enablePackages('MOCK000ACE5', ['com.heytap.speechassist']);
+  assert.equal(on.ok, true, 'не удалось включить обратно');
+  const listed2 = await adb.listVendorAssistants('MOCK000ACE5');
+  assert.equal(listed2.packages.find((p) => p.package === 'com.heytap.speechassist').disabled, false);
+});
+
+test('защищённый пакет берётся suspend, когда disable-user отказал', async () => {
+  const res = await adb.disablePackages('MOCK000ACE5', ['com.coloros.assistantscreen']);
+  assert.equal(res.ok, true, 'лестница стратегий должна была найти рабочий способ');
+  const result = res.results.find((r) => r.package === 'com.coloros.assistantscreen');
+  assert.equal(result.workedMode, 'suspend', 'на этом устройстве работает именно suspend');
+  const refused = result.attempts.find((a) => a.mode === 'disable-user');
+  assert.equal(refused.blocked, false);
+  assert.match(refused.refuseReason, /проигнорировала/i, 'отказ должен быть объяснён');
+
+  const restored = await adb.enablePackages('MOCK000ACE5', ['com.coloros.assistantscreen']);
+  assert.equal(restored.ok, true, 'пакет должен возвращаться');
+  const state = await adb.inspectPackageState('MOCK000ACE5', 'com.coloros.assistantscreen');
+  assert.equal(state.blocked, false);
+  assert.equal(state.suspended, false);
+});
+
+test('отчёт по стратегиям: hide и disable на Android 16 недоступны shell-у', async () => {
+  const res = await adb.disablePackages('MOCK000ACE5', ['com.oplus.aiunit'], {
+    strategies: ['disable-user', 'hide', 'disable'],
+  });
+  assert.equal(res.ok, false, 'ни одна из этих стратегий не должна сработать');
+  const attempts = res.results[0].attempts;
+  assert.ok(attempts.some((a) => a.mode === 'hide' && /MANAGE_USERS/.test(a.refuseReason || '')));
+  assert.ok(
+    attempts.some((a) => a.mode === 'disable' && /не может менять состояние/i.test(a.refuseReason || '')),
+  );
+});
+
+test('защищённые пакеты не отключаются', async () => {
+  const res = await adb.disablePackages('MOCK000ACE5', ['com.oplus.ocs']);
+  assert.equal(res.requested.length, 0, 'com.oplus.ocs должен отсекаться до выполнения команд');
+});
+
+test('мусорные имена пакетов не попадают в shell', async () => {
+  const res = await adb.disablePackages('MOCK000ACE5', ['com.heytap.speechassist; rm -rf /']);
+  assert.equal(res.requested.length, 0);
 });
 
 (async () => {

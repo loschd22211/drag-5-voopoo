@@ -26,7 +26,13 @@ const PACKAGES = {
 };
 
 /** Пакеты, в которых может жить фирменный китайский ассистент (Breeno и родня). */
-const VENDOR_ASSISTANT_RE = /breeno|voiceassist|aiunit|assistantscreen|com\.oplus\.ocs/i;
+const VENDOR_ASSISTANT_RE = /breeno|voiceassist|speechassist|assistantscreen|aiunit/i;
+
+/**
+ * Пакеты, которые НЕЛЬЗЯ отключать, даже если они попали под регулярку:
+ * это не голосовые ассистенты, а системные/облачные службы OPPO.
+ */
+const VENDOR_DENYLIST = [/com\.oplus\.ocs$/i, /com\.oplus\.aiunit\.engine$/i, /coloros\.ota/i];
 
 /** Известные компоненты голосовых сервисов Google (fallback, если запрос сервисов не сработал). */
 const KNOWN_VOICE_SERVICES = [
@@ -199,6 +205,43 @@ function prettyActivityLabel(activity) {
     .trim();
 }
 
+/**
+ * Насколько экран полезен для задачи «повесить ассистента на кнопку питания».
+ * Чем больше число — тем выше в списке. 0 и меньше = мусор, не показываем как рекомендацию.
+ *
+ * Правила выведены из реального дампа OnePlus Ace 5 (PKG110, Android 16, ColorOS 16):
+ * там рядом с нужными экранами лежат fuelgauge.AdvancedPowerUsageDetailActivity,
+ * TimePower*, PowerUsage* и OneHandedOAssistService — они к кнопке питания отношения не имеют.
+ */
+const POWER_ACTIVITY_SCORES = [
+  { re: /PowerMenuSettingsActivity$/i, score: 100, hint: 'долгое нажатие кнопки питания / меню питания' },
+  { re: /ManageAssistActivity$/i, score: 95, hint: 'цифровой помощник по умолчанию' },
+  { re: /(SpeechAssistant|AssistantSettings)Activity$/i, score: 90, hint: 'голосовой помощник' },
+  { re: /(ButtonsAndGestures|ButtonNavigationSettings|ConvenienceTools|PowerButton)Activity$/i, score: 80, hint: 'кнопки и жесты' },
+  { re: /DoubleTapPowerSettingsActivity$/i, score: 40, hint: 'двойное нажатие кнопки питания' },
+];
+
+const POWER_ACTIVITY_NOISE =
+  /(fuelgauge|PowerUsage|TimePower|PowerOffPrompt|PowerWakeUp|NotificationAssistant|OneHanded|Receiver$|Service$|Provider$|GuideActivity$)/i;
+
+function scoreActivity(activityClass) {
+  if (POWER_ACTIVITY_NOISE.test(activityClass)) return { score: -10, hint: 'не относится к кнопке питания' };
+  for (const rule of POWER_ACTIVITY_SCORES) {
+    if (rule.re.test(activityClass)) return { score: rule.score, hint: rule.hint };
+  }
+  return { score: 10, hint: 'возможно, связано с кнопкой питания' };
+}
+
+/** Сортирует найденные экраны: сверху те, что реально нужны, мусор в конце. */
+function rankPowerActivities(items) {
+  return items
+    .map((item) => {
+      const { score, hint } = scoreActivity(item.activity);
+      return { ...item, score, hint };
+    })
+    .sort((a, b) => b.score - a.score || a.component.localeCompare(b.component));
+}
+
 // ---------------------------------------------------------------------------
 // шаги диагностики
 // ---------------------------------------------------------------------------
@@ -335,6 +378,8 @@ async function diagnose(serial) {
     }
   }
 
+  const rankedPowerActivities = rankPowerActivities(powerActivities);
+
   // 6. сводные подсказки
   const hints = buildHints({ device, packages, assistant, vendorAssistants, suggestedAssistantComponent });
 
@@ -348,7 +393,9 @@ async function diagnose(serial) {
     voiceServices,
     suggestedAssistantComponent,
     settingsApps: settingsPkgs,
-    powerActivities,
+    powerActivities: rankedPowerActivities,
+    recommendedPowerActivity:
+      (rankedPowerActivities.find((a) => a.score >= 80) || {}).component || null,
     googleSettingsActivities,
     hints,
     log,
@@ -551,6 +598,192 @@ async function rawCommand(serial, cmd) {
 }
 
 // ---------------------------------------------------------------------------
+// фирменные ассистенты (Breeno и родня): найти и обратимо снять
+// ---------------------------------------------------------------------------
+
+function isDeniedVendorPackage(pkg) {
+  return VENDOR_DENYLIST.some((re) => re.test(pkg));
+}
+
+/**
+ * На ColorOS 16 пакета `com.oplus.breeno` больше нет: Breeno разложен на части.
+ * Классификация нужна, чтобы не отключать вслепую AI-движок, которым пользуются
+ * другие системные функции (галерея, перевод и т.п.).
+ */
+function classifyVendorPackage(pkg) {
+  if (/speechassist|voiceassist|\bbreeno\b/i.test(pkg)) {
+    return { role: 'voice', label: 'голосовой ассистент (Breeno)', risk: 'safe' };
+  }
+  if (/assistantscreen/i.test(pkg)) {
+    return { role: 'screen', label: 'экран ассистента Breeno', risk: 'safe' };
+  }
+  if (/aiunit/i.test(pkg)) {
+    return { role: 'engine', label: 'AI-движок OPPO (может быть нужен другим функциям)', risk: 'caution' };
+  }
+  return { role: 'other', label: 'фирменный ассистент', risk: 'caution' };
+}
+
+/** Список фирменных ассистентов на устройстве + отключены ли они уже. */
+async function listVendorAssistants(serial) {
+  const installedRes = await shell(serial, 'pm list packages --user 0', { timeout: 30000 });
+  const disabledRes = await shell(serial, 'pm list packages -d', { timeout: 30000 });
+  const installed = parsePackageList(installedRes.stdout || '');
+  const fallback = installed.size ? installedRes : await shell(serial, 'pm list packages', { timeout: 30000 });
+  const universe = parsePackageList(fallback.stdout || '');
+  const disabled = parsePackageList(disabledRes.stdout || '');
+  const all = [...universe].filter((p) => VENDOR_ASSISTANT_RE.test(p));
+  return {
+    ok: fallback.ok,
+    packages: all
+      .map((pkg) => {
+        const { role, label, risk } = classifyVendorPackage(pkg);
+        return {
+          package: pkg,
+          role,
+          kind: label,
+          risk,
+          disabled: disabled.has(pkg),
+          protected: isDeniedVendorPackage(pkg),
+          installedDist: installed.size ? installed.has(pkg) : true,
+        };
+      })
+      .sort((a, b) => Number(a.protected) - Number(b.protected) || a.package.localeCompare(b.package)),
+  };
+}
+
+/**
+ * Лестница стратегий блокировки. OPPO защищает часть пакетов от `disable-user`
+ * (ответ «new state: default» — отказ) и от `uninstall` (DELETE_FAILED_INTERNAL_ERROR),
+ * но нередко пропускает `hide` или `suspend`. Все стратегии обратимы, root не нужен.
+ */
+const BLOCK_STRATEGIES = [
+  { name: 'disable-user', cmd: (p) => `pm disable-user --user 0 ${p}`, okRe: /new state: disabled/i },
+  { name: 'suspend', cmd: (p) => `pm suspend --user 0 ${p}`, okRe: /new suspended state: true|suspended/i },
+  { name: 'hide', cmd: (p) => `pm hide ${p}`, okRe: /new state: (hidden|disabled)/i },
+  { name: 'uninstall-user', cmd: (p) => `pm uninstall --user 0 ${p}`, okRe: /Success/i },
+  // на Android 16 shell-у запрещено: SecurityException "Shell cannot change component state"
+  { name: 'disable', cmd: (p) => `pm disable --user 0 ${p}`, okRe: /new state: disabled/i },
+];
+
+/** Причины отказа, которые встречались на реальных устройствах — для понятных сообщений. */
+const BLOCK_FAILURE_HINTS = [
+  { re: /requires: android\.permission\.MANAGE_USERS/i, text: 'shell-у запрещено (нужен MANAGE_USERS) — только root' },
+  { re: /Shell cannot change component state/i, text: 'shell не может менять состояние этого пакета' },
+  { re: /DELETE_FAILED_INTERNAL_ERROR/i, text: 'прошивка запрещает uninstall --user 0' },
+  { re: /new state: default/i, text: 'прошивка проигнорировала команду (состояние не изменилось)' },
+];
+
+const UNBLOCK_COMMANDS = [
+  (p) => `pm unsuspend --user 0 ${p}`,
+  (p) => `pm unhide ${p}`,
+  (p) => `pm enable ${p}`,
+  (p) => `cmd package install-existing ${p}`,
+];
+
+/**
+ * Смотрит фактическое состояние пакета: текст ответа врёт, а состояние — нет.
+ */
+async function inspectPackageState(serial, pkg) {
+  const [disabledRes, installedRes, dumpRes] = await Promise.all([
+    shell(serial, 'pm list packages -d', { timeout: 25000 }),
+    shell(serial, 'pm list packages --user 0', { timeout: 25000 }),
+    shell(serial, `dumpsys package ${pkg}`, { timeout: 25000 }),
+  ]);
+  const disabled = parsePackageList(disabledRes.stdout || '').has(pkg);
+  const installedForUser = parsePackageList(installedRes.stdout || '').has(pkg);
+  const dump = dumpRes.stdout || '';
+  const suspended = /suspended=true/i.test(dump);
+  const hidden = /hidden=true/i.test(dump);
+  const evidence = [];
+  if (disabled) evidence.push('есть в pm list packages -d');
+  if (!installedForUser) evidence.push('не установлен для пользователя 0');
+  if (suspended) evidence.push('suspended=true в dumpsys');
+  if (hidden) evidence.push('hidden=true в dumpsys');
+  return {
+    blocked: disabled || !installedForUser || suspended || hidden,
+    disabled,
+    installedForUser,
+    suspended,
+    hidden,
+    evidence,
+  };
+}
+
+/** Перебирает стратегии блокировки, проверяя результат состоянием. */
+async function disablePackages(serial, packages, options = {}) {
+  const targets = (Array.isArray(packages) ? packages : [packages])
+    .filter((p) => typeof p === 'string' && /^[a-zA-Z0-9_.]+$/.test(p))
+    .filter((p) => !isDeniedVendorPackage(p));
+
+  const strategies = options.strategies
+    ? BLOCK_STRATEGIES.filter((st) => options.strategies.includes(st.name))
+    : BLOCK_STRATEGIES;
+
+  const steps = [];
+  const results = [];
+
+  for (const pkg of targets) {
+    const attempts = [];
+    let blocked = false;
+    for (const strategy of strategies) {
+      if (blocked) break;
+      const r = await shell(serial, strategy.cmd(pkg), { timeout: 25000 });
+      const out = (r.stdout + r.stderr).trim();
+      const state = await inspectPackageState(serial, pkg);
+      attempts.push({
+        package: pkg,
+        mode: strategy.name,
+        cmd: strategy.cmd(pkg),
+        saysOk: strategy.okRe.test(out),
+        refuseReason: (BLOCK_FAILURE_HINTS.find((h) => h.re.test(out)) || {}).text || null,
+        blocked: state.blocked,
+        evidence: state.evidence,
+        out: clip(out, 400),
+      });
+      blocked = state.blocked;
+    }
+    results.push({
+      package: pkg,
+      blocked,
+      attempts,
+      workedMode: (attempts.find((a) => a.blocked) || {}).mode || null,
+    });
+    steps.push(...attempts);
+  }
+
+  const verified = results.filter((r) => r.blocked).map((r) => r.package);
+  const failed = results.filter((r) => !r.blocked).map((r) => r.package);
+  return { ok: failed.length === 0, verified, failed, requested: targets, steps, results };
+}
+
+/** Включает пакеты обратно: пробует все способы разблокировки подряд. */
+async function enablePackages(serial, packages) {
+  const targets = (Array.isArray(packages) ? packages : [packages]).filter(
+    (p) => typeof p === 'string' && /^[a-zA-Z0-9_.]+$/.test(p),
+  );
+  const steps = [];
+  const stillBlocked = [];
+
+  for (const pkg of targets) {
+    let restored = false;
+    for (const build of UNBLOCK_COMMANDS) {
+      const cmd = build(pkg);
+      const r = await shell(serial, cmd, { timeout: 25000 });
+      const out = (r.stdout + r.stderr).trim();
+      steps.push({ package: pkg, cmd, ok: !/Error|Exception|Failure/i.test(out), out: clip(out, 300) });
+      const state = await inspectPackageState(serial, pkg);
+      if (!state.blocked) {
+        restored = true;
+        break;
+      }
+    }
+    if (!restored) stillBlocked.push(pkg);
+  }
+
+  return { ok: stillBlocked.length === 0, steps, stillBlocked };
+}
+
+// ---------------------------------------------------------------------------
 // беспроводное подключение
 // ---------------------------------------------------------------------------
 
@@ -585,9 +818,24 @@ module.exports = {
   snapshotSettings,
   diffSnapshots,
   rawCommand,
+  listVendorAssistants,
+  disablePackages,
+  enablePackages,
+  inspectPackageState,
+  BLOCK_STRATEGIES,
+  BLOCK_FAILURE_HINTS,
   pair,
   connect,
   enableTcpip,
   // экспорт парсеров для тестов
-  _internal: { parseProps, parseSettingsList, parsePackageList, parseDevices, parseVoiceServices },
+  _internal: {
+    parseProps,
+    parseSettingsList,
+    parsePackageList,
+    parseDevices,
+    parseVoiceServices,
+    rankPowerActivities,
+    scoreActivity,
+    classifyVendorPackage,
+  },
 };

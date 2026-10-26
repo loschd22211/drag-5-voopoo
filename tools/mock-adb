@@ -21,6 +21,10 @@ const DEFAULT_STATE = {
   assistant: null,
   voiceInteractionService: null,
   powerAction: 'power_menu',
+  disabled: ['com.oplus.customize.coreapp', 'com.android.virtualization.terminal', 'com.android.devicelockcontroller'],
+  uninstalled: [],
+  hidden: [],
+  suspended: [],
   paired: false,
   connected: true,
   prefs: {
@@ -56,14 +60,14 @@ const PROPS = `[ro.product.brand]: [OnePlus]
 [ro.product.name]: [OP5D1L1]
 [ro.product.device]: [OP5D1L1]
 [ro.product.marketname]: [OnePlus Ace 5]
-[ro.build.version.release]: [15]
+[ro.build.version.release]: [16]
 [ro.build.version.sdk]: [35]
-[ro.build.display.id]: [PLK110_11.A.62]
-[ro.build.version.ota]: [PLK110_11.A.62_202504011200]
+[ro.build.display.id]: [V16.1.0]
+[ro.build.version.ota]: [V16.1.0]
 [ro.build.version.incremental]: [1743500000]
 [ro.build.version.security_patch]: [2025-03-05]
-[ro.build.version.oplusrom]: [ColorOS 15.0.1]
-[ro.build.region]: [CN]
+[ro.build.version.oplusrom]: [ColorOS 16]
+[ro.build.region]: []
 [ro.product.locale]: [zh-CN]`;
 
 const PACKAGES = [
@@ -72,29 +76,54 @@ const PACKAGES = [
   'com.google.android.gms',
   'com.google.android.gsf',
   'com.android.vending',
-  'com.oplus.settings',
+  'com.android.settings',
   'com.oplus.appmarket',
   'com.heytap.market',
-  'com.oplus.breeno',
+  'com.heytap.speechassist',
+  'com.coloros.assistantscreen',
+  'com.oplus.aiunit',
+  'com.aiunit.aon',
+  'com.oplus.customize.coreapp',
+  'com.android.virtualization.terminal',
+  'com.android.devicelockcontroller',
   'com.oplus.ocs',
   'com.android.systemui',
   'com.oplus.launcher',
 ];
 
+/** Эти пакеты ColorOS защищает: pm disable-user отвечает «new state: default» и ничего не меняет. */
+/**
+ * Поведение снято с реального OnePlus Ace 5 (PKG110, Android 16, ColorOS 16 CN):
+ *   pm disable-user  -> «new state: default» (отказ) для защищённых пакетов
+ *   pm disable       -> SecurityException: Shell cannot change component state for null to 2
+ *   pm hide/unhide   -> SecurityException: Access denied, requires MANAGE_USERS
+ *   pm suspend       -> РАБОТАЕТ (new suspended state: true)
+ *   pm uninstall     -> Failure [DELETE_FAILED_INTERNAL_ERROR] для защищённых
+ */
+const DISABLE_PROTECTED = new Set(['com.coloros.assistantscreen', 'com.oplus.aiunit']);
+const UNINSTALL_PROTECTED = new Set(['com.coloros.assistantscreen', 'com.oplus.aiunit']);
+
 const SETTINGS_PACKAGE_DUMP = `Packages:
-  Package [com.oplus.settings] (1a2b3c):
+  Package [com.android.settings] (1a2b3c):
     userId=1000
     Activities:
-      com.oplus.settings/.Settings
-      com.oplus.settings/.OplusPowerButtonSettingsActivity
-      com.oplus.settings/.OplusButtonsAndGesturesActivity
-      com.oplus.settings/.OplusConvenienceToolsActivity
-      com.oplus.settings/.OplusAssistantSettingsActivity
-      com.oplus.settings/.OplusGoogleSettingsActivity
-      com.oplus.settings/.OplusGoogleAccountActivity
-      com.oplus.settings/.OplusAccessibilitySettingsActivity
-      com.oplus.settings/.OplusDefaultAppsActivity
-      com.oplus.settings/.OplusBatterySettingsActivity
+      com.android.settings/.fuelgauge.AdvancedPowerUsageDetailActivity
+      com.android.settings/.Settings$ButtonNavigationSettingsActivity
+      com.android.settings/.Settings$DoubleTapPowerSettingsActivity
+      com.android.settings/.Settings$ManageAssistActivity
+      com.android.settings/.Settings$NotificationAssistantSettingsActivity
+      com.android.settings/.Settings$PowerMenuSettingsActivity
+      com.android.settings/.Settings$PowerUsageAdvancedActivity
+      com.android.settings/.Settings$PowerUsageSummaryActivity
+      com.android.settings/com.oplus.settings.feature.convenient.PowerWakeUpGuideActivity
+      com.android.settings/com.oplus.settings.feature.onehanded.OneHandedOAssistService
+      com.android.settings/com.oplus.settings.feature.othersettings.timepower.PowerOffPromptActivity
+      com.android.settings/com.oplus.settings.feature.othersettings.timepower.TimePowerReceiver
+      com.android.settings/com.oplus.settings.feature.othersettings.timepower.TimePowerSetChangedReceiver
+      com.android.settings/com.oplus.settings.feature.speechassistant.SettingsSpeechAssistantActivity
+      com.android.settings/com.oplus.settings.OplusSettingsActivity$AiPowerSupplyActivity
+      com.android.settings/com.oplus.settings.OplusSettingsActivity$OplusGoogleSettingsActivity
+      com.android.settings/com.oplus.settings.OplusSettingsActivity$TimePowerSettingsActivity
 `;
 
 function settingsListSecure(state) {
@@ -177,6 +206,128 @@ function handle(args) {
     return 0;
   }
 
+  if (sh === 'pm list packages --user 0' || sh === 'pm list packages --user 0 ') {
+    const gone = new Set([...(state.uninstalled || []), ...(state.hidden || [])]);
+    out(PACKAGES.filter((p) => !gone.has(p)).map((p) => `package:${p}`).join('\n'));
+    return 0;
+  }
+
+  if (/^pm (un)?hide\s+\S+$/.test(sh)) {
+    const verb = sh.startsWith('pm unhide') ? 'unhide' : 'hide';
+    out(
+      `Exception occurred while executing '${verb}':\njava.lang.SecurityException: Access denied, requires: android.permission.MANAGE_USERS`,
+    );
+    return 1;
+  }
+
+  let ps = sh.match(/^pm suspend(?:\s+--user\s+\d+)?\s+(\S+)$/);
+  if (ps) {
+    const pkg = ps[1];
+    if (!PACKAGES.includes(pkg)) {
+      out(`Error: java.lang.IllegalArgumentException: Unknown package: ${pkg}`);
+      return 1;
+    }
+    state.suspended = [...new Set([...(state.suspended || []), pkg])];
+    saveState(state);
+    out(`Package ${pkg} suspended`);
+    return 0;
+  }
+
+  let pus = sh.match(/^pm unsuspend(?:\s+--user\s+\d+)?\s+(\S+)$/);
+  if (pus) {
+    state.suspended = (state.suspended || []).filter((p) => p !== pus[1]);
+    saveState(state);
+    out(`Package ${pus[1]} unsuspended`);
+    return 0;
+  }
+
+  if (/^dumpsys package com\.coloros\.assistantscreen$/.test(sh) ||
+      /^dumpsys package com\.oplus\.aiunit$/.test(sh) ||
+      /^dumpsys package com\.heytap\.speechassist$/.test(sh)) {
+    const pkg = sh.split(' ').pop();
+    const suspended = (state.suspended || []).includes(pkg);
+    const hidden = (state.hidden || []).includes(pkg);
+    out(
+      `Packages:\n  Package [${pkg}] (1a2b3c):\n    userId=1000\n    pkgFlags=[ SYSTEM HAS_CODE ALLOW_CLEAR_USER_DATA ]\n    User 0: installed=true hidden=${hidden} suspended=${suspended} stopped=false enabled=0`,
+    );
+    return 0;
+  }
+
+  if (sh === 'pm list packages -d' || sh === 'pm list packages -d --user 0') {
+    out((state.disabled || []).map((p) => `package:${p}`).join('\n'));
+    return 0;
+  }
+
+  if (/^pm disable(?:\s+--user\s+\d+)?\s+\S+$/.test(sh)) {
+    out(
+      "Exception occurred while executing 'disable':\njava.lang.SecurityException: Shell cannot change component state for null to 2",
+    );
+    return 1;
+  }
+
+  let pd = sh.match(/^pm disable-user(?:\s+--user\s+\d+)?\s+(\S+)$/);
+  if (pd) {
+    const pkg = pd[1];
+    if (!PACKAGES.includes(pkg)) {
+      out(`Error: java.lang.IllegalArgumentException: Unknown package: ${pkg}`);
+      return 1;
+    }
+    if (DISABLE_PROTECTED.has(pkg)) {
+      // так ведёт себя ColorOS на защищённых пакетах: команда проходит, состояние не меняется
+      out(`Package ${pkg} new state: default`);
+      return 0;
+    }
+    state.disabled = [...new Set([...(state.disabled || []), pkg])];
+    saveState(state);
+    out(`Package ${pkg} new state: disabled-user`);
+    return 0;
+  }
+
+  let pu = sh.match(/^pm uninstall(?:\s+--user\s+\d+)?\s+(\S+)$/);
+  if (pu) {
+    const pkg = pu[1];
+    if (!PACKAGES.includes(pkg)) {
+      out('Failure [not installed for 0]');
+      return 1;
+    }
+    if (UNINSTALL_PROTECTED.has(pkg)) {
+      out('Failure [DELETE_FAILED_INTERNAL_ERROR]');
+      return 1;
+    }
+    state.uninstalled = [...new Set([...(state.uninstalled || []), pkg])];
+    state.disabled = (state.disabled || []).filter((p) => p !== pkg);
+    saveState(state);
+    out('Success');
+    return 0;
+  }
+
+  let pe = sh.match(/^pm enable\s+(\S+)$/);
+  if (pe) {
+    const pkg = pe[1];
+    if (!PACKAGES.includes(pkg)) {
+      out(`Error: java.lang.IllegalArgumentException: Unknown package: ${pkg}`);
+      return 1;
+    }
+    state.disabled = (state.disabled || []).filter((p) => p !== pkg);
+    saveState(state);
+    out(`Package ${pkg} new state: enabled`);
+    return 0;
+  }
+
+  let pie = sh.match(/^cmd package install-existing\s+(\S+)$/);
+  if (pie) {
+    const pkg = pie[1];
+    if (!PACKAGES.includes(pkg)) {
+      out(`Error: package ${pkg} not found`);
+      return 1;
+    }
+    state.uninstalled = (state.uninstalled || []).filter((p) => p !== pkg);
+    state.hidden = (state.hidden || []).filter((p) => p !== pkg);
+    saveState(state);
+    out('Package installed for user: 0');
+    return 0;
+  }
+
   if (sh === 'settings list secure') {
     out(settingsListSecure(state));
     return 0;
@@ -220,7 +371,7 @@ function handle(args) {
     return 0;
   }
 
-  if (/^dumpsys package com\.oplus\.settings$/.test(sh)) {
+  if (/^dumpsys package (com\.oplus\.settings|com\.android\.settings)$/.test(sh)) {
     out(SETTINGS_PACKAGE_DUMP);
     return 0;
   }

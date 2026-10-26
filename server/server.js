@@ -173,6 +173,28 @@ const routes = {
     return { ok: true, before: before.createdAt, after: after.createdAt, changes };
   },
 
+  'GET /api/vendor': async (body) => {
+    const serial = await resolveSerial(body);
+    if (!serial) return { ok: false, error: 'нет подключённых устройств' };
+    return adb.listVendorAssistants(serial);
+  },
+
+  'POST /api/vendor/disable': async (body) => {
+    const serial = await resolveSerial(body);
+    if (!serial) return { ok: false, error: 'нет подключённых устройств' };
+    if (!body.packages || !body.packages.length) return { ok: false, error: 'не переданы пакеты' };
+    return adb.disablePackages(serial, body.packages, {
+      uninstallForCurrentUser: !!body.uninstallForCurrentUser,
+    });
+  },
+
+  'POST /api/vendor/enable': async (body) => {
+    const serial = await resolveSerial(body);
+    if (!serial) return { ok: false, error: 'нет подключённых устройств' };
+    if (!body.packages || !body.packages.length) return { ok: false, error: 'не переданы пакеты' };
+    return adb.enablePackages(serial, body.packages);
+  },
+
   'POST /api/raw': async (body) => {
     const serial = await resolveSerial(body);
     if (!serial) return { ok: false, error: 'нет подключённых устройств' };
