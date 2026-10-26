@@ -394,6 +394,7 @@ test('lockscreen-player: включает карточку плеера и об�
   assert.ok(src.includes('версия скрипта'), 'версия должна печататься при запуске');
   assert.ok(!src.includes('сейчас ничего не играет'), 'старое вранье про «ничего не играет» не должно вернуться');
   assert.ok(src.includes('нельзя сделать из adb'), 'нельзя обещать то, что из shell не меняется');
+  assert.ok(src.includes('settings list system'), 'проверяем и ключи медиа в namespace system');
 });
 
 (async () => {
