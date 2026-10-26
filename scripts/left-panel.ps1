@@ -1,13 +1,15 @@
-﻿# Убирает левую страницу рабочего стола ColorOS (китайские рекомендации).
+﻿# Убирает левую страницу рабочего стола ColorOS (китайская лента рекомендаций).
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\left-panel.ps1
-#   ... -Find      только посмотреть, кто рисует страницу
+#   ... -Find      только посмотреть, ничего не менять
 #   ... -Restore   вернуть выключенное этим скриптом
 #
-# Важно: скрипт НЕ выключает «всё китайское списком». Он трогает только тот
-# пакет, который реально рисует левую страницу, и только если это контент
-# (помощник, новости, лента, поиск). Обои, будильник, файлы, звук, батарея
-# и остальная система не трогаются никогда.
+# Скрипт сам листает на левую страницу, сам читает её разметку и ищет китайские
+# надписи. Гасит только пакеты из белого списка $Allowed. Обои, будильник, файлы,
+# звук, заметки и остальную систему не трогает никогда.
+#
+# Проверка честная: «убрано» пишется только если пакет был в разметке до и исчез
+# после. Если страницу рисует сам лончер — так и пишется.
 #
 # Файл в UTF-8 с BOM (см. docs/windows-encoding.md).
 
@@ -19,7 +21,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$ScriptVersion = "2026-10-27.2"
+$ScriptVersion = "2026-10-27.3"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
   chcp 65001 > $null
@@ -62,11 +64,6 @@ function Connect-Adb {
   Write-Ok "телефон: $($script:Serial)"
 }
 
-function Get-Lines($text, [string]$pattern, [int]$max) {
-  if ($null -eq $text) { return @() }
-  return @(($text -split "`r?`n") | Where-Object { $_ -match $pattern } | Select-Object -First $max)
-}
-
 function Get-State($pkg) {
   $out = Sh ("pm list packages -d --user 0 " + $pkg)
   if ($out -match ("package:" + [regex]::Escape($pkg) + "(\r?\n|$)")) { return 'отключён' }
@@ -85,27 +82,18 @@ function Disable-Package($pkg) {
   return ''
 }
 
-# Что разрешено гасить: только контентные приложения. Всё остальное — никогда.
+# Только контент: помощник, новости, лента, поиск, pictorial. Больше ничего.
 $Allowed = @(
   'com.coloros.assistantscreen',
   'com.heytap.assistantscreen',
   'com.oplus.assistantscreen',
-  'com.coloros.assistant',
   'com.heytap.news',
   'com.oppo.news',
   'com.coloros.news',
-  'com.heytap.browser',
   'com.heytap.quicksearchbox',
   'com.oppo.quicksearchbox',
   'com.oplus.contentportal',
   'com.heytap.pictorial'
-)
-
-$Keep = @(
-  'com.android.launcher',
-  'com.oppo.launcher',
-  'com.android.systemui',
-  'com.android.settings'
 )
 
 $LeftPanelKeys = @(
@@ -115,7 +103,7 @@ $LeftPanelKeys = @(
   'asistant_screen_type'
 )
 
-# Слепок экрана: кто реально нарисовал то, что видно.
+# Разметка экрана: что реально видно.
 function Get-ScreenDump {
   Sh 'uiautomator dump /sdcard/leftpanel.xml' | Out-Null
   $xml = Sh 'cat /sdcard/leftpanel.xml'
@@ -123,28 +111,39 @@ function Get-ScreenDump {
   return $xml
 }
 
-# Пакеты внутри разметки, по частоте: самый частый — тот, кто рисует страницу.
+# Пакеты в разметке: точное совпадение имени, без подстрок.
 function Get-DumpPackages($xml) {
   $counts = @{}
   foreach ($m in [regex]::Matches($xml, 'package="([^"]+)"')) {
-    $n = $m.Groups[1].Value
+    $n = $m.Groups[1].Value.Trim()
     if ($counts.ContainsKey($n)) { $counts[$n] = $counts[$n] + 1 } else { $counts[$n] = 1 }
   }
   return $counts
 }
 
-function Get-DumpTexts($xml, [int]$max) {
+# Китайские надписи на экране — главный признак, что мы на той странице.
+function Get-CjkTexts($xml) {
   $out = @()
-  foreach ($m in [regex]::Matches($xml, 'text="([^"]+)"')) {
+  foreach ($m in [regex]::Matches($xml, 'text="([^"]*[\u4e00-\u9fff][^"]*)"')) {
     $t = $m.Groups[1].Value
-    if ($t.Trim() -ne '' -and $out -notcontains $t) { $out += $t }
-    if ($out.Count -ge $max) { break }
+    if ($out -notcontains $t) { $out += $t }
   }
   return $out
 }
 
+# Свайп вправо от первого экрана = переход на страницу «-1».
+function Open-LeftPage {
+  Sh 'input swipe 220 1150 1050 1150 160' | Out-Null
+  Start-Sleep -Milliseconds 800
+}
+
 function Set-LeftPanelOff {
   foreach ($k in $LeftPanelKeys) { Sh ("settings put secure " + $k + " 0") | Out-Null }
+}
+
+# Пакет был в разметке (точное имя), а не просто упомянут в строке.
+function Test-InDump($xml, $pkg) {
+  return ($xml -match ('package="' + [regex]::Escape($pkg) + '"'))
 }
 
 # ---------------------------------------------------------------- main
@@ -167,71 +166,78 @@ if ($Restore) {
     if ((Get-State $p) -eq 'включён') { Write-Dim ("включён: " + $p); $n++ }
   }
   Write-Ok ("включено обратно: " + $n)
-  Write-Dim "если нужно вернуть вообще всё китайское — scripts\restore-cn.ps1"
+  Write-Dim "вернуть вообще всё: scripts\restore-cn.ps1"
   Write-Host ""
   Read-Host "Enter — закрыть"
   exit 0
 }
 
-Write-Step "Что сейчас"
+Write-Step "Ключи левой страницы"
 foreach ($k in $LeftPanelKeys) {
   $v = Sh ("settings get secure " + $k)
   if ($v -eq 'null') { $v = '—' }
   Write-Dim ($k + " = " + $v)
 }
 
-Write-Step "Покажи страницу"
-Write-Dim "свайпни рабочий стол вправо до упора — до страницы с китайскими советами"
-Write-Dim "оставь её на экране и вернись в PowerShell"
-Sh 'logcat -c' | Out-Null
-Read-Host "Enter — когда она на экране"
-
-Write-Step "Смотрю, кто её рисует"
-$sfLines = Get-Lines (Sh 'dumpsys SurfaceFlinger --list') 'launcher|assist|news|feed|recommend|heytap|coloros|oplus|pictorial' 12
-foreach ($l in $sfLines) { Write-Host ("     " + $l.Trim()) -ForegroundColor DarkGray }
-
-$xml = Get-ScreenDump
-if ($null -eq $xml) {
-  Write-Warn "разметку экрана снять не удалось (uiautomator не ответил)"
-} else {
-  $texts = Get-DumpTexts $xml 8
-  if ($texts.Count -gt 0) {
-    Write-Dim "что написано на странице:"
-    foreach ($t in $texts) { Write-Host ("     " + $t) -ForegroundColor DarkGray }
-  }
-  $counts = Get-DumpPackages $xml
-  Write-Dim "кто нарисовал:"
-  $sorted = $counts.GetEnumerator() | Sort-Object -Property Value -Descending
-  foreach ($e in ($sorted | Select-Object -First 6)) {
-    Write-Host ("     {0}  ({1} элементов)" -f $e.Key, $e.Value) -ForegroundColor DarkGray
-  }
+if (-not $Find) {
+  Set-LeftPanelOff
+  Write-Ok "поставил в 0"
+  # Лончер читает эти ключи при старте, поэтому перезапускаем его.
+  Sh 'am force-stop com.android.launcher' | Out-Null
+  Start-Sleep -Seconds 3
+  Write-Dim "лончер перезапущен"
 }
 
-# Кто из разрешённых реально присутствует на странице.
+Write-Step "Листаю на левую страницу"
+Write-Dim "телефон держи разблокированным, руками ничего не трогай"
+Start-Sleep -Seconds 1
+
+$firstXml = $null
+$firstCjk = @()
+for ($i = 1; $i -le 3; $i++) {
+  Open-LeftPage
+  $xml = Get-ScreenDump
+  if ($null -eq $xml) { continue }
+  $cjk = Get-CjkTexts $xml
+  if ($cjk.Count -gt 0) { $firstXml = $xml; $firstCjk = $cjk; break }
+  if ($null -eq $firstXml) { $firstXml = $xml }
+}
+
+if ($null -eq $firstXml) {
+  Stop-Script "разметку экрана снять не удалось. Разблокируй телефон, открой рабочий стол и запусти ещё раз"
+}
+
+$pkgCounts = Get-DumpPackages $firstXml
+Write-Dim "кто на странице:"
+foreach ($e in ($pkgCounts.GetEnumerator() | Sort-Object -Property Value -Descending | Select-Object -First 6)) {
+  Write-Host ("     {0}  ({1} элементов)" -f $e.Key, $e.Value) -ForegroundColor DarkGray
+}
+
+if ($firstCjk.Count -eq 0) {
+  Write-Warn "китайских надписей на странице нет"
+  Write-Dim "значит страница либо уже убрана, либо лента не подгрузилась"
+  Write-Dim "полистай её вниз и запусти скрипт с ключом -Find, когда на экране будут иероглифы"
+  Write-Host ""
+  Read-Host "Enter — закрыть"
+  exit 0
+}
+
+Write-Ok ("китайских надписей: " + $firstCjk.Count)
+foreach ($t in ($firstCjk | Select-Object -First 8)) { Write-Host ("     " + $t) -ForegroundColor DarkGray }
+
+# Кто из белого списка реально присутствует в разметке.
 $hits = @()
-if ($null -ne $xml) {
-  foreach ($p in $Allowed) {
-    if ($xml -match ('package="' + [regex]::Escape($p) + '"')) { $hits += $p }
-  }
-}
-# Ничего не нашлось — берём того, кого видно в слоях экрана.
-if ($hits.Count -eq 0) {
-  foreach ($p in $Allowed) {
-    foreach ($l in $sfLines) {
-      if ($l -match [regex]::Escape($p)) { if ($hits -notcontains $p) { $hits += $p } }
-    }
-  }
+foreach ($p in $Allowed) {
+  if (Test-InDump $firstXml $p) { $hits += $p }
 }
 
 Write-Host ""
 if ($hits.Count -eq 0) {
-  Write-Warn "страницу рисует не отдельное приложение, а сам лончер"
-  Write-Dim "такую страницу выключает только переключатель в настройках рабочего стола"
-  Write-Dim "долгое нажатие на пустом месте рабочего стола → Настройки рабочего стола →"
-  Write-Dim "страница «Помощник» / «Рекомендации» / «智能助手» → выключить"
-  Write-Host ""
-  Write-Dim "ключи я всё равно поставлю в 0"
-  if (-not $Find) { Set-LeftPanelOff; Write-Ok "ключи левой страницы в 0" }
+  Write-Warn "отдельного приложения на странице нет — её рисует сам лончер"
+  Write-Dim "такую страницу выключает только переключатель в настройках рабочего стола:"
+  Write-Dim "долгое нажатие на пустом месте рабочего стола → шестерёнка (Настройки) →"
+  Write-Dim "пункт со словом 智能助手 / 负一屏 / Breeno / Рекомендации → выключить"
+  Write-Dim "скинь мне разметку этого экрана (скрипт с -Find), и я назову точный пункт"
   Write-Host ""
   Read-Host "Enter — закрыть"
   exit 0
@@ -247,35 +253,42 @@ if ($Find) {
   exit 0
 }
 
-Write-Step "Гашу только это"
+Write-Step "Гашу"
 foreach ($p in $hits) {
-  if ($Keep -contains $p) { continue }
   $how = Disable-Package $p
   if ($how -ne '') { Write-Ok ("{0}: {1}" -f $p, $how) } else { Write-Warn ("{0}: не поддался" -f $p) }
 }
-Set-LeftPanelOff
-Write-Ok "ключи левой страницы в 0"
 
-Write-Step "Проверка"
-Read-Host "Enter — открой левую страницу ещё раз и нажми Enter"
-$xml2 = Get-ScreenDump
-if ($null -eq $xml2) {
-  Write-Warn "разметку снять не удалось — проверь глазами"
+Write-Step "Проверка по факту"
+Start-Sleep -Seconds 2
+$secondXml = $null
+$secondCjk = @()
+for ($i = 1; $i -le 3; $i++) {
+  Open-LeftPage
+  $xml2 = Get-ScreenDump
+  if ($null -eq $xml2) { continue }
+  $secondXml = $xml2
+  $secondCjk = Get-CjkTexts $xml2
+  if ($secondCjk.Count -gt 0) { break }
+}
+
+if ($null -eq $secondXml) {
+  Write-Warn "разметку после отключения снять не удалось — проверь глазами"
 } else {
   $still = @()
-  foreach ($p in $hits) {
-    if ($xml2 -match ('package="' + [regex]::Escape($p) + '"')) { $still += $p }
-  }
-  if ($still.Count -eq 0) {
-    Write-Ok "на странице больше нет этого приложения — убрано"
+  foreach ($p in $hits) { if (Test-InDump $secondXml $p) { $still += $p } }
+  if ($still.Count -eq 0 -and $secondCjk.Count -eq 0) {
+    Write-Ok "страницы нет: ни пакета, ни китайских надписей"
+  } elseif ($still.Count -eq 0) {
+    Write-Warn ("пакет ушёл, но иероглифов на экране ещё " + $secondCjk.Count)
+    Write-Dim "значит ленту рисует не он; скинь разметку — разберу"
   } else {
-    Write-Warn ("всё ещё видно: " + ($still -join ', '))
-    Write-Dim "значит страницу держит лончер; выключается только в настройках рабочего стола"
+    Write-Warn ("пакет на странице остался: " + ($still -join ', '))
   }
 }
 
 Write-Host ""
-Write-Dim "Обои, будильник, файлы, звук и остальную систему скрипт не трогает."
+Write-Dim "Обои, будильник, заметки, файлы и остальную систему скрипт не трогает."
 Write-Dim "Вернуть: эта же команда с ключом -Restore"
 Write-Host ""
 Read-Host "Enter — закрыть"
