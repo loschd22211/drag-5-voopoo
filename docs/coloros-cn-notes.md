@@ -318,6 +318,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gemini-trigger.ps1 -
 
 ---
 
+## 2.96. ColorGoogle: почему агент не стартует
+
+| Сообщение | Что это значит | Что делать |
+| --- | --- | --- |
+| `Cannot read main switch; activation refused.` | `content call ... --method status --arg compact` не вернул `runEnabled` — провайдер не ответил, главный переключатель не прочитан | открыть приложение и включить главный переключатель, проверить: `scripts/gemini-trigger.ps1 -Status` |
+| `Main switch is off; enable ColorGoogle before activation.` | провайдер ответил, но главный переключатель выключен | то же |
+| `SecurityException: grantRuntimePermission: Neither user 2000 nor current process has android.permission.GRANT_RUNTIME_PERMISSIONS` | `pm grant READ_LOGS` не работает: READ_LOGS не runtime-разрешение, а shell на Android 13+ не имеет права выдавать такие | `adb shell appops set dev.evoker.homeholdcts READ_LOGS allow` (так и делает скрипт) |
+
+Провайдер `content://dev.evoker.homeholdcts.desktopsearch` объявлен с
+`android:permission="android.permission.DUMP"` и пускает только uid 2000, поэтому
+диагностика требует именно `adb shell`. Ответ читается так:
+`runEnabled` — главный переключатель, `agentConnected` — агент,
+`wakeActive` — читает ли агент события кнопки (без READ_LOGS будет `false`).
+
+`wakeActive=false` при `runEnabled=true` — самый частый вид «всё включено, но кнопка молчит»:
+агент жив, а лог ему недоступен.
+
+---
+
 ## 3. Что не заведётся даже при рабочей кнопке
 
 - **«Окей, Google» / Voice Match.** На CN-сборках часто отсутствует системная библиотека,
