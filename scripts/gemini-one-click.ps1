@@ -114,7 +114,7 @@ function Set-PowerButtonToGoogle {
   Sh 'settings put global power_button_long_press 5' | Out-Null
   Sh 'settings put secure key_home_long_press_action 2' | Out-Null
   $longPress = Sh 'settings get global power_button_long_press'
-  if ($longPress -match '5') { Say-Ok "долгое нажатие питания = помощник (power_button_long_press=5)" }
+  if ($longPress -match '5') { Say-Dim "power_button_long_press=5 выставлен; на ColorOS 16 удержание питания всё равно открывает меню (docs 2.991)" }
   else { Say-No "power_button_long_press не принят (=$longPress)" }
 
   $wake = Sh 'settings get secure speech_assist_power_wakeup'
@@ -341,14 +341,14 @@ function Sweep-SideButton {
     if ($r.Assist) {
       Say-Ok ("side_button=$now открывает помощника")
       $found = $now
-      $log += "side_button=$now: ДА"
+      $log += "side_button=${now}: ДА"
       break
     } elseif ($r.PowerMenu) {
       Say-No "   снова меню выключения"
-      $log += "side_button=$now: меню выключения"
+      $log += "side_button=${now}: меню выключения"
     } else {
       Say-No "   ничего не произошло"
-      $log += "side_button=$now: тихо"
+      $log += "side_button=${now}: тихо"
     }
   }
 
