@@ -269,8 +269,12 @@ function Test-Assistant {
     $assistFocus = @($seenFocus | Where-Object { $_ -match 'googlequicksearchbox|apps\.bard' }).Count -gt 0
     $assistWindow = @($seenNew | Where-Object { $_ -match 'google|robin|assistant|assist|voice' }).Count -gt 0
 
+    $powerMenu = @($seenNew | Where-Object { $_ -match 'ActionsDialog' }).Count -gt 0
     if ($assistFocus -or $assistWindow) {
       Say-Ok ("{0}: работает" -f $how)
+    } elseif ($powerMenu) {
+      Say-No ("{0}: открылось МЕНЮ ВЫКЛЮЧЕНИЯ, а не помощник" -f $how)
+      Say-Dim "   это и есть баг ColorOS: кнопка питания отдана меню, ключи AOSP она игнорирует"
     } else {
       Say-No ("{0}: скрипт не увидел ни окна, ни фокуса помощника" -f $how)
       if ($seenNew.Count -gt 0) { Say-Dim ("   новые окна за это время: " + ($seenNew -join ', ')) }
