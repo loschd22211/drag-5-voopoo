@@ -484,6 +484,33 @@ adb shell dumpsys window   → искать mCurrentFocus=Window{… com.google.
 
 ---
 
+## 2.996. Плеер на экране блокировки (сторонние приложения)
+
+Симптом: китайский плеер на локскрине виден, а Sova / VK / Spotify — нет.
+
+Причина в одном ключе:
+
+```
+settings get secure media_controls_lock_screen   → 0
+```
+
+`0` означает «карточку плеера на экране блокировки не показывать»; для системного
+плеера ColorOS тянет её своим механизмом (`media_button_receiver=com.heytap.music/...`),
+поэтому он работает и при нуле. Лечение:
+
+```
+adb shell settings put secure media_controls_lock_screen 1
+adb shell settings put secure lockscreen_show_controls 1
+```
+
+Если после этого карточки нет — смотреть уведомление плеера. У Sova, например,
+уведомление есть (`channel=audio_playback_channel`, группа `music_player_group`,
+кнопки «предыдущая / воспроизвести / следующая»), но `importance=2` (LOW):
+ColorOS такие уведомления на локскрин не выносит. Поднимается в
+`Настройки → Уведомления → приложение → важность`.
+
+---
+
 ## 3. Что не заведётся даже при рабочей кнопке
 
 - **«Окей, Google» / Voice Match.** На CN-сборках часто отсутствует системная библиотека,

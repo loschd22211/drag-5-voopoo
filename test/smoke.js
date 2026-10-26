@@ -328,6 +328,18 @@ test('одноклик: сам находит помощника, снимает
   assert.ok(src.includes('always_on_vpn_app'), 'постоянный VPN должен настраиваться');
 });
 
+test('плеер на локскрине и AOSP-ключи кнопки зашиты в одноклик', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'gemini-one-click.ps1'), 'utf8');
+  // media_controls_lock_screen=0 по умолчанию: сторонние плееры не видны на экране блокировки
+  assert.ok(src.includes('media_controls_lock_screen 1'), 'нужно включать карточку плеера на локскрине');
+  assert.ok(src.includes('lockscreen_show_controls 1'), 'и показ элементов управления на локскрине');
+  assert.ok(src.includes('power_button_long_press 5'), 'AOSP-код 5 = помощник по долгому нажатию питания');
+  assert.ok(src.includes('key_home_long_press_action 2'), 'AOSP-код 2 = помощник по долгому нажатию Home');
+  // проверка кнопки больше не делает один замер через фиксированную паузу
+  assert.ok(!/Start-Sleep -Seconds 5/.test(src), 'один замер через 5 секунд врал — нужен опрос');
+  assert.ok(src.includes('for ($i = 0; $i -lt 6; $i++)'), 'фокус надо опрашивать несколько раз');
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {

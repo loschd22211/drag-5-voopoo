@@ -103,6 +103,15 @@ function Set-PowerButtonToGoogle {
   Sh 'settings put secure assist_gesture_enabled 1' | Out-Null
   Sh 'settings put secure assist_gesture_wake_enabled 1' | Out-Null
   Sh 'settings put secure assist_long_press_home_enabled 1' | Out-Null
+
+  # AOSP-переопределение поведения клавиш: 5 = «запустить помощника», 2 = «помощник по Home».
+  # На части прошивок ColorOS читает их даже когда собственный переключатель не работает.
+  Sh 'settings put global power_button_long_press 5' | Out-Null
+  Sh 'settings put secure key_home_long_press_action 2' | Out-Null
+  $longPress = Sh 'settings get global power_button_long_press'
+  if ($longPress -match '5') { Say-Ok "долгое нажатие питания = помощник (power_button_long_press=5)" }
+  else { Say-No "power_button_long_press не принят (=$longPress)" }
+
   $wake = Sh 'settings get secure speech_assist_power_wakeup'
   $gesture = Sh 'settings get secure assist_gesture_enabled'
   if ($gesture -match '1') { Say-Ok "жест «удержание питания → помощник» включён" } else { Say-No "жест не включился (assist_gesture_enabled=$gesture)" }
@@ -132,20 +141,38 @@ function Set-AppRetention {
   Say-Dim "appops не трогаю: на этой прошивке shell их менять не может"
 }
 
+function Set-LockScreenPlayer {
+  # На ColorOS 16 карточку плеера на локскрине включает отдельный ключ,
+  # и по умолчанию он выключен: сторонние плееры в локскрине не видны.
+  $before = Sh 'settings get secure media_controls_lock_screen'
+  Sh 'settings put secure media_controls_lock_screen 1' | Out-Null
+  Sh 'settings put secure lockscreen_show_controls 1' | Out-Null
+  $after = Sh 'settings get secure media_controls_lock_screen'
+  if ($after -match '1') { Say-Ok "плеер на экране блокировки включён (было: $before)" }
+  else { Say-No "не удалось включить плеер на локскрине (media_controls_lock_screen=$after)" }
+  Say-Dim "если карточки всё равно нет — у плеера низкий приоритет уведомлений: Настройки -> Уведомления -> приложение -> включить"
+}
+
 function Test-PowerButton {
   Say-Step "Проверка: «нажимаю» кнопку питания программно"
+  # Один замер через фиксированную паузу врал: окно помощника могло ещё не подняться
+  # или уже закрыться. Опрашиваем несколько секунд и берём первый же не-лончер.
   Sh 'input keyevent KEYCODE_ASSIST' | Out-Null
-  Start-Sleep -Seconds 5
-  $win = Sh 'dumpsys window'
   $focus = ''
-  $m = [regex]::Match($win, 'mCurrentFocus=Window\{[^}]*\}')
-  if ($m.Success) { $focus = $m.Value -replace '\s+', ' ' }
-  if (-not $focus) {
-    $act = Sh 'dumpsys activity activities'
-    $m2 = [regex]::Match($act, 'mResumedActivity[^\r\n]*')
-    if ($m2.Success) { $focus = $m2.Value }
+  $seen = @()
+  for ($i = 0; $i -lt 6; $i++) {
+    Start-Sleep -Milliseconds 800
+    $win = Sh 'dumpsys window'
+    $m = [regex]::Match($win, 'mCurrentFocus=Window\{[^}]*\}')
+    if (-not $m.Success) { continue }
+    $line = $m.Value -replace '\s+', ' '
+    if ($seen -notcontains $line) { $seen += $line }
+    if ($line -match 'googlequicksearchbox|apps\.bard') { $focus = $line; break }
+    if ($line -notmatch 'launcher' -and $line -notmatch 'systemui') { $focus = $line; break }
+    $focus = $line
   }
   if (-not $focus) { Say-No "не смог прочитать, что на экране — посмотри глазами: открылся Gemini?"; return }
+  if ($seen.Count -gt 1) { Say-Dim ("за время проверки в фокусе были: " + ($seen -join ' | ')) }
 
   Say-Dim $focus
   if ($focus -match 'googlequicksearchbox|apps\.bard') {
@@ -167,6 +194,8 @@ function Undo-All {
   Sh 'settings put secure assist_gesture_enabled 0' | Out-Null
   Sh 'settings put secure assist_gesture_wake_enabled 0' | Out-Null
   Sh 'settings delete global always_on_vpn_app' | Out-Null
+  Sh 'settings put global power_button_long_press 1' | Out-Null
+  Sh 'settings put secure key_home_long_press_action 0' | Out-Null
   Say-Ok "Breeno вернулся на кнопку, жест выключен, постоянный VPN снят"
 }
 
@@ -205,6 +234,7 @@ Say-Step "Кнопка питания → Gemini"
 Set-PowerButtonToGoogle
 Set-VpnAlwaysOn
 Set-AppRetention
+Set-LockScreenPlayer
 
 Test-PowerButton
 
