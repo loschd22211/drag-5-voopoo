@@ -38,6 +38,55 @@ bash scripts/oneclick.sh
 
 ---
 
+> **Где лежит код.** Всё, что ниже, находится в ветке `arena/9556c5bb-drag-5-voopoo`
+> (PR #1). В `main` пока пусто — если качаешь архив через «Download ZIP», переключись
+> на эту ветку, иначе получишь пустой репозиторий.
+
+## Установка одной командой (PowerShell, Windows)
+
+Репозиторий приватный, поэтому нужна авторизация. Открой PowerShell (Win → «PowerShell»)
+и вставь целиком этот блок — он сам скачает проект на Рабочий стол и запустит настройку:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+$repo   = 'loschd22211/drag-5-voopoo'
+$branch = 'arena/9556c5bb-drag-5-voopoo'
+$dest   = Join-Path ([Environment]::GetFolderPath('Desktop')) 'drag-5-voopoo'
+if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+
+if (Get-Command gh -ErrorAction SilentlyContinue) {
+    gh repo clone $repo $dest -- --branch $branch
+} elseif (Get-Command git -ErrorAction SilentlyContinue) {
+    git clone --branch $branch "https://github.com/$repo.git" $dest
+} else {
+    Start-Process "https://github.com/$repo/tree/$branch"
+    throw 'ни git, ни gh не установлены — используй план Б из README (два шага в браузере)'
+}
+
+Get-ChildItem $dest -Recurse -File | Unblock-File
+powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dest 'scripts\oneclick.ps1')
+```
+
+Если `git`/`gh` не установлены — **план Б**, без установки чего-либо:
+
+1. Открой в браузере (ты уже авторизован): 
+   https://github.com/loschd22211/drag-5-voopoo/tree/arena/9556c5bb-drag-5-voopoo
+2. Зелёная кнопка **Code → Download ZIP**.
+3. Вставь в PowerShell:
+
+```powershell
+$zip = Get-ChildItem "$HOME\Downloads\*.zip" |
+       Where-Object Name -like 'drag-5-voopoo*' |
+       Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Expand-Archive $zip.FullName -DestinationPath ([Environment]::GetFolderPath('Desktop')) -Force
+$dir = Get-ChildItem ([Environment]::GetFolderPath('Desktop')) -Directory -Filter 'drag-5-voopoo-*' |
+       Sort-Object LastWriteTime -Descending | Select-Object -First 1
+Get-ChildItem $dir.FullName -Recurse -File | Unblock-File
+powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir.FullName 'scripts\oneclick.ps1')
+```
+
+---
+
 ## Что внутри
 
 | Что | Для чего |
