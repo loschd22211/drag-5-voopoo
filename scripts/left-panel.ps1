@@ -4,12 +4,11 @@
 #   ... -Find      только показать, что на странице, ничего не менять
 #   ... -Restore   вернуть выключенное этим скриптом
 #
-# Скрипт сам жмёт «домой», сам свайпает на левую страницу по реальному размеру
-# экрана, сам читает её разметку и ищет иероглифы. Гасит только пакеты из
-# $Allowed. Обои, будильник, заметки, файлы, звук и систему не трогает.
+# Скрипт сам жмёт «домой» и сам пробует разные свайпы, проверяя по скриншоту,
+# что страница действительно сменилась. Только после этого он что-то гасит.
 #
-# Проверка честная: печатается число китайских надписей до и после. «Убрано»
-# пишется только если их стало ноль, иначе — сколько осталось.
+# Важно: suspend не убивает уже запущенный процесс — лента остаётся на экране.
+# Поэтому после выключения пакета идёт am force-stop, и только потом проверка.
 #
 # Файл в UTF-8 с BOM (см. docs/windows-encoding.md).
 
@@ -21,7 +20,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$ScriptVersion = "2026-10-27.4"
+$ScriptVersion = "2026-10-27.5"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
   chcp 65001 > $null
@@ -64,7 +63,6 @@ function Connect-Adb {
   Write-Ok "телефон: $($script:Serial)"
 }
 
-# Размер экрана в пикселях: свайп по центру, а не наугад.
 function Get-ScreenSize {
   $raw = Sh 'wm size'
   $m = [regex]::Match($raw, 'Override size:\s*(\d+)x(\d+)')
@@ -85,13 +83,17 @@ function Get-State($pkg) {
 
 function Disable-Package($pkg) {
   Sh ("pm disable-user --user 0 " + $pkg) | Out-Null
-  if ((Get-State $pkg) -eq 'отключён') { return 'отключён' }
-  Sh ("pm suspend --user 0 " + $pkg) | Out-Null
-  if ((Get-State $pkg) -eq 'приостановлен') { return 'приостановлен' }
-  return ''
+  $how = ''
+  if ((Get-State $pkg) -eq 'отключён') { $how = 'отключён' }
+  else {
+    Sh ("pm suspend --user 0 " + $pkg) | Out-Null
+    if ((Get-State $pkg) -eq 'приостановлен') { $how = 'приостановлен' }
+  }
+  # suspend не убивает процесс: без force-stop лента остаётся на экране
+  Sh ("am force-stop " + $pkg) | Out-Null
+  return $how
 }
 
-# Только лента и её поставщики. Больше ничего.
 $Allowed = @(
   'com.coloros.assistantscreen',
   'com.heytap.assistantscreen',
@@ -113,6 +115,15 @@ $LeftPanelKeys = @(
   'asistant_screen_type'
 )
 
+# Отпечаток экрана: по нему видно, сменилась ли страница после свайпа.
+function Get-ScreenHash {
+  Sh 'screencap -p /sdcard/leftpanel.png' | Out-Null
+  $out = Sh 'md5sum /sdcard/leftpanel.png'
+  $m = [regex]::Match($out, '([0-9a-fA-F]{32})')
+  if ($m.Success) { return $m.Groups[1].Value }
+  return ''
+}
+
 function Get-ScreenDump {
   Sh 'uiautomator dump /sdcard/leftpanel.xml' | Out-Null
   $xml = Sh 'cat /sdcard/leftpanel.xml'
@@ -120,16 +131,8 @@ function Get-ScreenDump {
   return $xml
 }
 
-function Get-DumpPackages($xml) {
-  $counts = @{}
-  foreach ($m in [regex]::Matches($xml, 'package="([^"]+)"')) {
-    $n = $m.Groups[1].Value.Trim()
-    if ($counts.ContainsKey($n)) { $counts[$n] = $counts[$n] + 1 } else { $counts[$n] = 1 }
-  }
-  return $counts
-}
-
 function Get-CjkTexts($xml) {
+  if ($null -eq $xml) { return @() }
   $out = @()
   foreach ($m in [regex]::Matches($xml, 'text="([^"]*[\u4e00-\u9fff][^"]*)"')) {
     $t = $m.Groups[1].Value
@@ -138,17 +141,74 @@ function Get-CjkTexts($xml) {
   return $out
 }
 
-# Свайп вправо от первого экрана = страница «-1». Старт не у края, чтобы не
-# поймать системный жест «назад», и на середине высоты, чтобы не попасть в виджет.
+function Get-DumpPackages($xml) {
+  $counts = @{}
+  if ($null -eq $xml) { return $counts }
+  foreach ($m in [regex]::Matches($xml, 'package="([^"]+)"')) {
+    $n = $m.Groups[1].Value.Trim()
+    if ($counts.ContainsKey($n)) { $counts[$n] = $counts[$n] + 1 } else { $counts[$n] = 1 }
+  }
+  return $counts
+}
+
+# Блок окна ленты целиком (до следующего «Window #»), а не соседние окна.
+function Test-PanelWindow {
+  $win = Sh 'dumpsys window windows'
+  $lines = $win -split "`r?`n"
+  $block = @()
+  $inside = $false
+  foreach ($l in $lines) {
+    if ($l -match 'Window #\d+ Window\{') {
+      $inside = ($l -match 'assistantscreen')
+      if ($inside) { $block = @($l); continue }
+    }
+    if ($inside) { $block += $l }
+  }
+  $text = ($block -join "`n")
+  if ($text -eq '') { return $false }
+  if ($text -match 'isVisible=true') { return $true }
+  if ($text -match 'mViewVisibility=0x0' -and $text -match 'mHasSurface=true') { return $true }
+  return $false
+}
+
+function Invoke-Swipe([string]$Variant, [int]$Width, [int]$Height) {
+  if ($Variant -eq 'A') {
+    Sh ("input swipe {0} {1} {2} {1} 250" -f [int]($Width * 0.10), [int]($Height * 0.55), [int]($Width * 0.90)) | Out-Null
+  } elseif ($Variant -eq 'B') {
+    Sh ("input swipe {0} {1} {2} {1} 400" -f [int]($Width * 0.25), [int]($Height * 0.75), [int]($Width * 0.95)) | Out-Null
+  } else {
+    Sh ("input swipe {0} {1} {2} {1} 600" -f [int]($Width * 0.05), [int]($Height * 0.35), [int]($Width * 0.85)) | Out-Null
+  }
+  Start-Sleep -Milliseconds 900
+}
+
+# Идём на левую страницу, пока не сменится картинка экрана.
 function Open-LeftPage([int]$Width, [int]$Height) {
   Sh 'input keyevent 3' | Out-Null
-  Start-Sleep -Milliseconds 500
-  $x1 = [int]($Width * 0.12)
-  $x2 = [int]($Width * 0.88)
-  $y = [int]($Height * 0.55)
-  for ($i = 0; $i -lt 2; $i++) {
-    Sh ("input swipe {0} {1} {2} {1} 220" -f $x1, $y, $x2) | Out-Null
-    Start-Sleep -Milliseconds 700
+  Start-Sleep -Milliseconds 700
+  $home = Get-ScreenHash
+  foreach ($variant in @('A', 'B', 'C')) {
+    for ($try = 1; $try -le 2; $try++) {
+      Invoke-Swipe -Variant $variant -Width $Width -Height $Height
+      $now = Get-ScreenHash
+      if ($now -ne '' -and $home -ne '' -and $now -ne $home) {
+        return [pscustomobject]@{ Changed = $true; Variant = $variant; Try = $try }
+      }
+    }
+  }
+  return [pscustomobject]@{ Changed = $false; Variant = ''; Try = 0 }
+}
+
+function Measure-Page([int]$Width, [int]$Height) {
+  $move = Open-LeftPage -Width $Width -Height $Height
+  $xml = Get-ScreenDump
+  $cjk = Get-CjkTexts $xml
+  return [pscustomobject]@{
+    Xml = $xml
+    Cjk = $cjk
+    Moved = $move.Changed
+    Variant = $move.Variant
+    Window = (Test-PanelWindow)
   }
 }
 
@@ -157,32 +217,8 @@ function Set-LeftPanelOff {
 }
 
 function Test-InDump($xml, $pkg) {
+  if ($null -eq $xml) { return $false }
   return ($xml -match ('package="' + [regex]::Escape($pkg) + '"'))
-}
-
-# Видно ли окно ленты в списке окон прямо сейчас.
-function Test-PanelWindow {
-  $win = Sh 'dumpsys window windows'
-  $block = @()
-  $lines = $win -split "`r?`n"
-  for ($i = 0; $i -lt $lines.Count; $i++) {
-    if ($lines[$i] -match 'Window #\d+ Window\{.*assistantscreen') {
-      for ($j = $i; $j -lt [Math]::Min($i + 40, $lines.Count); $j++) { $block += $lines[$j] }
-      break
-    }
-  }
-  $text = ($block -join "`n")
-  if ($text -match 'isVisible=true' -or $text -match 'mHasSurface=true.*isVisible=true') { return $true }
-  return $false
-}
-
-function Measure-Page {
-  param([int]$Width, [int]$Height)
-  Open-LeftPage -Width $Width -Height $Height
-  $xml = Get-ScreenDump
-  $cjk = @()
-  if ($null -ne $xml) { $cjk = Get-CjkTexts $xml }
-  return [pscustomobject]@{ Xml = $xml; Cjk = $cjk; Browser = (Test-PanelWindow) }
 }
 
 # ---------------------------------------------------------------- main
@@ -221,45 +257,40 @@ foreach ($k in $LeftPanelKeys) {
 if (-not $Find) {
   Set-LeftPanelOff
   Write-Ok "поставил в 0"
-  Sh 'am force-stop com.android.launcher' | Out-Null
-  Start-Sleep -Seconds 3
-  Write-Dim "лончер перезапущен (ключи он читает только при старте)"
 }
 
 Write-Step "Открываю левую страницу сам"
 Write-Dim "телефон держи разблокированным, экран не гаси"
 $first = Measure-Page -Width $size[0] -Height $size[1]
 
-if ($null -eq $first.Xml) {
-  Stop-Script "разметку снять не удалось: разблокируй телефон и запусти ещё раз"
+if (-not $first.Moved) {
+  Write-Warn "ни один свайп не сменил экран — до левой страницы не добрался"
+  Write-Dim "оставь телефон на рабочем столе, не в приложении, и запусти ещё раз"
+  Write-Dim "либо пролистай вручную: тогда запусти скрипт с ключом -Find"
+  Write-Host ""
+  Read-Host "Enter — закрыть"
+  exit 0
 }
+
+Write-Ok ("страница открылась (свайп " + $first.Variant + ")")
 
 $counts = Get-DumpPackages $first.Xml
 Write-Dim "на экране:"
 foreach ($e in ($counts.GetEnumerator() | Sort-Object -Property Value -Descending | Select-Object -First 6)) {
   Write-Host ("     {0}  ({1})" -f $e.Key, $e.Value) -ForegroundColor DarkGray
 }
-
-if ($first.Cjk.Count -eq 0 -and -not $first.Browser) {
-  Write-Warn "китайских надписей нет и окна ленты не видно"
-  Write-Dim "значит страница уже убрана либо не открылась"
-  Write-Dim "открой её руками и запусти: ... -Find  — тогда скрипт скажет, кто её рисует"
-  Write-Host ""
-  Read-Host "Enter — закрыть"
-  exit 0
-}
-
-Write-Ok ("до правки: китайских надписей " + $first.Cjk.Count + ", окно ленты: " + $first.Browser)
+Write-Dim ("китайских надписей: " + $first.Cjk.Count + ", окно ленты: " + $first.Window)
 foreach ($t in ($first.Cjk | Select-Object -First 10)) { Write-Host ("     " + $t) -ForegroundColor DarkGray }
 
 $hits = @()
 foreach ($p in $Allowed) {
   if (Test-InDump $first.Xml $p) { $hits += $p }
 }
+if ($hits.Count -eq 0 -and $first.Window) { $hits = @('com.coloros.assistantscreen', 'com.heytap.browser') }
 if ($hits.Count -eq 0) { $hits = @('com.coloros.assistantscreen', 'com.heytap.browser') }
-Write-Ok ("гашу: " + ($hits -join ', '))
 
 if ($Find) {
+  Write-Ok ("гасил бы: " + ($hits -join ', '))
   Write-Host ""
   Write-Dim "режим -Find: ничего не менял"
   Write-Host ""
@@ -267,34 +298,33 @@ if ($Find) {
   exit 0
 }
 
-Write-Step "Гашу"
+Write-Step "Гашу и убиваю процессы"
 foreach ($p in $hits) {
   $how = Disable-Package $p
-  if ($how -ne '') { Write-Ok ("{0}: {1}" -f $p, $how) } else { Write-Warn ("{0}: не поддался" -f $p) }
+  if ($how -ne '') { Write-Ok ("{0}: {1} + force-stop" -f $p, $how) } else { Write-Warn ("{0}: не поддался" -f $p) }
 }
 Sh 'am force-stop com.android.launcher' | Out-Null
 Start-Sleep -Seconds 3
 
 Write-Step "Проверяю по факту"
 $second = Measure-Page -Width $size[0] -Height $size[1]
-if ($null -eq $second.Xml) {
-  Write-Warn "второй замер не удался — посмотри глазами"
+if (-not $second.Moved) {
+  Write-Warn "после правки до страницы не добрался — проверь глазами"
 } else {
-  Write-Dim ("после правки: китайских надписей " + $second.Cjk.Count + ", окно ленты: " + $second.Browser)
-  if ($second.Cjk.Count -eq 0 -and -not $second.Browser) {
-    Write-Ok "страницы нет"
-  } elseif ($second.Cjk.Count -lt $first.Cjk.Count) {
-    Write-Warn ("стало меньше, но не ноль: было " + $first.Cjk.Count + ", осталось " + $second.Cjk.Count)
-    Write-Dim "скинь эти строки — добью остаток точечно"
+  Write-Dim ("китайских надписей: " + $second.Cjk.Count + ", окно ленты: " + $second.Window)
+  if ($second.Cjk.Count -eq 0 -and -not $second.Window) {
+    Write-Ok "ленты нет: ни надписей, ни окна"
+  } elseif ($second.Window -and $second.Cjk.Count -eq 0) {
+    Write-Warn "окно ленты ещё в системе, но текста нет — возможно, страница уже пустая"
+    Write-Dim "посмотри глазами: если на странице пусто, дело сделано"
   } else {
-    Write-Warn "страница на месте: её рисует не тот пакет, что я погасил"
-    Write-Dim "тогда остаётся только переключатель в настройках рабочего стола:"
-    Write-Dim "долгое нажатие на пустом месте → шестерёнка → пункт 智能助手 / 负一屏 / 资讯"
+    Write-Warn ("лента на месте, иероглифов " + $second.Cjk.Count)
+    Write-Dim "тогда её держит лончер: долгое нажатие на пустом месте → шестерёнка →"
+    Write-Dim "пункт 智能助手 / 负一屏 / 资讯 → выключить"
   }
 }
 
 Write-Host ""
-Write-Dim "Обои, будильник, заметки, файлы и остальную систему скрипт не трогает."
 Write-Dim "Вернуть: эта же команда с ключом -Restore"
 Write-Host ""
 Read-Host "Enter — закрыть"

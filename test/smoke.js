@@ -442,6 +442,8 @@ test('left-panel: сам листает, читает разметку и не �
   assert.ok(src.includes('input swipe'), 'сам листает на левую страницу');
   assert.ok(src.includes('wm size'), 'свайп по реальному размеру экрана');
   assert.ok(src.includes('Test-PanelWindow'), 'и окно ленты проверяется');
+  assert.ok(src.includes('screencap'), 'свайп проверяется по скриншоту');
+  assert.ok(src.includes('am force-stop'), 'suspend не убивает процесс — нужен force-stop');
   assert.ok(src.includes('[\\u4e00-\\u9fff]'), 'ищет китайские надписи');
   assert.ok(src.includes('$Allowed'), 'есть белый список того, что можно гасить');
   assert.ok(src.includes('[switch]$Restore'), 'нужен откат');
