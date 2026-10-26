@@ -231,6 +231,7 @@ adb shell settings delete secure voice_interaction_service
 | Значение записалось, но кнопка открывает Breeno | Breeno ставит свой обработчик клавиши поверх роли помощника | `scripts/breeno-off.sh` / `breeno-off.ps1`: перебирают `disable-user → suspend → hide → uninstall` и проверяют результат по `dumpsys`. На ColorOS 16 обычно срабатывает `suspend` |
 | Значение записалось, но кнопка всё равно открывает меню питания | системный обработчик кнопки игнорирует помощника | `docs/coloros-cn-notes.md`, раздел «Activity Launcher / MiCTS» |
 | Breeno снят (`speechassist` off, `assistantscreen` suspended), а кнопка всё равно зовёт Breeno | вызов зашит в обработчик клавиши на уровне фреймворка | `scripts/gemini-trigger.ps1` — ставит ColorGoogle, он перехватывает кнопку сам |
+| Мастер Setup 1/5 не пускает дальше | `Continue` включается только при настоящем `READ_LOGS`, а app-op его не заменяет | штатный путь OnePlus: Настройки → Специальные возможности → Кнопка питания → Удержание → Google |
 | `Cannot read main switch; activation refused.` | приложение не отдаёт состояние — главный переключатель не включён | открыть приложение, включить главный переключатель, затем `-Status` |
 | `Error: Unknown operation string: READ_LOGS` | `appops` знает только строку операции | `android:read_logs` |
 | `READ_LOGS: SecurityException ... GRANT_RUNTIME_PERMISSIONS` | `pm grant` не может выдать это разрешение | скрипт выдаёт его через `appops set ... READ_LOGS allow` |

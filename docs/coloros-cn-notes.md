@@ -349,11 +349,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gemini-trigger.ps1 -
 сборке операция называется иначе, поэтому скрипт перебирает написания
 (`cmd appops` с именем → `appops` со строкой операции).
 
-Мастер можно листать кнопкой **Continue**: `READ_LOGS` нужен приложению для собственного
-чтения журнала, а сам агент запускается как shell (uid 2000) и журнал ему доступен без
-этого разрешения. Если мастер не пускает дальше — идти через «Copy ADB one-shot»:
-приложение копирует в буфер обмена официальную команду (`SetupCommands.java`), её можно
-вставить в PowerShell и выполнить.
+**Мастер нельзя пролистать без настоящего `READ_LOGS`.** Проверено по исходникам
+(`MainActivity.isCurrentSetupPageComplete()` → `isReadLogsGranted()` →
+`checkSelfPermission("android.permission.READ_LOGS")`), а кнопка `Continue` на первой
+странице включается только при `complete == true`. Значит:
+
+- app-op (`appops set … READ_LOGS allow`) мастер **не удовлетворяет** — это не выдача
+  разрешения, а режим операции;
+- `pm grant` требует у вызывающего `GRANT_RUNTIME_PERMISSIONS`, которого на этой сборке
+  у shell нет, поэтому команда из «Copy ADB one-shot» (`SetupCommands.java`) здесь падает;
+- Shizuku работает тем же uid 2000, то есть упирается в ту же стену;
+- без root пройти мастер нельзя.
+
+Вывод: на прошивке, где shell не может выдать `READ_LOGS`, ColorGoogle не настроить.
+Остаётся штатный путь OnePlus: **Настройки → Специальные возможности и удобства →
+Кнопка питания → Держать нажатой → Цифровой помощник → Google**. Значение `assistant`
+при этом уже указывает на `GsaVoiceInteractionService`.
 
 ---
 
