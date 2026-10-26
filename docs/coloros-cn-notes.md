@@ -231,6 +231,61 @@ adb shell am start -n 'com.android.settings/.Settings$PowerMenuSettingsActivity'
 
 ---
 
+## 2.9. Если кнопку не отдаёт даже suspend: ColorGoogle
+
+Когда `speechassist` отключён, `assistantscreen` приостановлен, а долгое нажатие всё равно
+открывает Breeno — вызов зашит в обработчик клавиши на уровне фреймворка. adb тут бессилен,
+но есть приложение, которое перехватывает кнопку само.
+
+### Почему ColorGoogle, а не MiCTS
+
+| | ColorGoogle | MiCTS |
+| --- | --- | --- |
+| Забирает **кнопку питания** | да, включая выключенный экран | нет, это про Circle to Search |
+| Нужен root | нет | нет (для базового режима) |
+| Проверено на | OPPO, Android 16, ColorOS 16.0.10.501 | OnePlus Ace 5, ColorOS 16.0.10 (preview-сборка) |
+| Лицензия / источник | GPL-3.0, форк MindTrigger Assist v16.2.0 | GPL-3.0, оригинал |
+
+Для задачи «нажал кнопку — открылся Gemini» подходит только ColorGoogle.
+Проект: https://github.com/joeyandu/ColorGoogle (неофициальный, не связан с Google/OPPO).
+
+### Что делает установщик `scripts/gemini-trigger.ps1`
+
+1. Находит adb (или скачивает platform-tools).
+2. Делает бэкап `assistant`, `voice_interaction_service` и whitelist в `.\colorgoogle-backup`.
+3. Скачивает APK нужного релиза и сверяет SHA-256 по `SHA256SUMS`.
+4. Ставит с `install -r -g` (разрешения сразу, без ручных диалогов).
+5. Выдаёт `READ_LOGS`, назначает Google помощником, включает оверлей, уведомления,
+   снимает оптимизацию батареи.
+6. Открывает приложение: остаётся включить **главный тумблер** и **Power button trigger** —
+   это только руками, изнутри приложения.
+7. Запускает shell-агент официальным скриптом проекта и показывает статус.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gemini-trigger.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gemini-trigger.ps1 -Restore
+```
+
+### Важные детали, на которых спотыкаются
+
+- **`voice_interaction_service` пустой.** ColorOS CN держит роль помощника за Google, но
+  оставляет `Settings.Secure.voice_interaction_service` пустым — тогда
+  `VoiceInteractionManagerService` вообще не поднимает сервис. Установщик заполняет оба ключа.
+- **Permission grants не запускают агент.** Нужен отдельный запуск
+  `activate-agent.sh` (в установщике — шаг 7), причём главный тумблер должен быть уже включён,
+  иначе скрипт отвечает `Main enable switch is off` и выходит с кодом 2.
+- **Конфликтующие OEM-компоненты.** Проект называет `com.heytap.speechassist` и
+  `com.coloros.colordirectservice`. Первый у нас уже отключён; второй не трогай без нужды.
+  Не удаляй `com.oplus.ovoicemanager` и `com.heytap.quicksearchbox`.
+- **O+Connect.** На тестовом устройстве его фоновая служба при подключении USB перезапускала
+  adb-демон и убивала привилегированный агент. Если функции отваливаются после подключения
+  кабеля — проверь его службы и активируй агент заново.
+- **Откат.** `-Restore` останавливает агент и возвращает `assistant` /
+  `voice_interaction_service` из бэкапа. Само приложение остаётся, удаляется через
+  `adb uninstall dev.evoker.homeholdcts`.
+
+---
+
 ## 3. Что не заведётся даже при рабочей кнопке
 
 - **«Окей, Google» / Voice Match.** На CN-сборках часто отсутствует системная библиотека,
