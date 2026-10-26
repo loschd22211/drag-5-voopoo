@@ -292,6 +292,15 @@ test('READ_LOGS выдаётся app-op, а не только pm grant', () => {
   assert.ok(src.includes('[switch]$Status'), 'нужен режим -Status для диагностики без изменений');
 });
 
+test('помощник назначается только если Google реально установлен', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'gemini-trigger.ps1'), 'utf8');
+  // на CN-прошивке строка assistant=GSA может указывать в пустоту
+  assert.ok(src.includes("pm path com.google.android.googlequicksearchbox"), 'нужна проверка наличия Google до записи assistant');
+  assert.ok(src.includes("pm path com.google.android.apps.bard"), 'нужно проверять и Gemini');
+  assert.ok(src.includes("assist_gesture_enabled 1"), 'жест «удержание питания -> помощник» надо включать');
+  assert.ok(src.includes("assist_gesture_wake_enabled 1"), 'и его вариант для выключенного экрана');
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {

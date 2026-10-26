@@ -368,6 +368,35 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gemini-trigger.ps1 -
 
 ---
 
+## 2.98. Кнопка освобождена, но ничего не открывается
+
+Последовательность, которая к этому приводит:
+
+1. `speech_assist_power_wakeup=1` — кнопку забирает Breeno. Ставим `0` — Breeno с кнопки снят,
+   и долгое нажатие возвращается к заводскому поведению, то есть к меню «Выключить / Перезагрузить».
+2. `settings get secure assistant` показывает `…GsaVoiceInteractionService` — но это **только
+   строчка**. Если Google-приложения нет, открывать по кнопке некому, и на
+   `am start -a android.intent.action.ASSIST` система отвечает
+   `com.android.internal.app.ResolverActivity` (диалог «чем открыть»). Это не поломка:
+   современный помощник не обязан регистрировать `ACTION_ASSIST`, он живёт в
+   `VoiceInteractionService`.
+
+Проверки и ключи:
+
+| Что | Команда | Смысл |
+| --- | --- | --- |
+| помощник вообще работает | `adb shell input keyevent KEYCODE_ASSIST` | идёт через `assistant`, минуя железо: если тут Gemini открылся — кнопка виновата, не Google |
+| Google установлен | `pm path com.google.android.googlequicksearchbox` | без пакета `assistant` бессмыслен |
+| Gemini отдельно | `pm path com.google.android.apps.bard` | не обязателен |
+| жест | `settings put secure assist_gesture_enabled 1` | AOSP: удержание питания открывает помощника |
+| жест без экрана | `settings put secure assist_gesture_wake_enabled 1` | то же на заблокированном экране |
+
+Порядок настройки на CN-прошивке: Настройки → Google (базовые сервисы) → поставить Google и
+Gemini из Play Маркета → в приложении Google выбрать Gemini помощником → только потом трогать
+ключи кнопки.
+
+---
+
 ## 3. Что не заведётся даже при рабочей кнопке
 
 - **«Окей, Google» / Voice Match.** На CN-сборках часто отсутствует системная библиотека,
