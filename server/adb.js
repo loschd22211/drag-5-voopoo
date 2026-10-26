@@ -199,6 +199,43 @@ function prettyActivityLabel(activity) {
     .trim();
 }
 
+/**
+ * Насколько экран полезен для задачи «повесить ассистента на кнопку питания».
+ * Чем больше число — тем выше в списке. 0 и меньше = мусор, не показываем как рекомендацию.
+ *
+ * Правила выведены из реального дампа OnePlus Ace 5 (PKG110, Android 16, ColorOS 16):
+ * там рядом с нужными экранами лежат fuelgauge.AdvancedPowerUsageDetailActivity,
+ * TimePower*, PowerUsage* и OneHandedOAssistService — они к кнопке питания отношения не имеют.
+ */
+const POWER_ACTIVITY_SCORES = [
+  { re: /PowerMenuSettingsActivity$/i, score: 100, hint: 'долгое нажатие кнопки питания / меню питания' },
+  { re: /ManageAssistActivity$/i, score: 95, hint: 'цифровой помощник по умолчанию' },
+  { re: /(SpeechAssistant|AssistantSettings)Activity$/i, score: 90, hint: 'голосовой помощник' },
+  { re: /(ButtonsAndGestures|ButtonNavigationSettings|ConvenienceTools|PowerButton)Activity$/i, score: 80, hint: 'кнопки и жесты' },
+  { re: /DoubleTapPowerSettingsActivity$/i, score: 40, hint: 'двойное нажатие кнопки питания' },
+];
+
+const POWER_ACTIVITY_NOISE =
+  /(fuelgauge|PowerUsage|TimePower|PowerOffPrompt|PowerWakeUp|NotificationAssistant|OneHanded|Receiver$|Service$|Provider$|GuideActivity$)/i;
+
+function scoreActivity(activityClass) {
+  if (POWER_ACTIVITY_NOISE.test(activityClass)) return { score: -10, hint: 'не относится к кнопке питания' };
+  for (const rule of POWER_ACTIVITY_SCORES) {
+    if (rule.re.test(activityClass)) return { score: rule.score, hint: rule.hint };
+  }
+  return { score: 10, hint: 'возможно, связано с кнопкой питания' };
+}
+
+/** Сортирует найденные экраны: сверху те, что реально нужны, мусор в конце. */
+function rankPowerActivities(items) {
+  return items
+    .map((item) => {
+      const { score, hint } = scoreActivity(item.activity);
+      return { ...item, score, hint };
+    })
+    .sort((a, b) => b.score - a.score || a.component.localeCompare(b.component));
+}
+
 // ---------------------------------------------------------------------------
 // шаги диагностики
 // ---------------------------------------------------------------------------
@@ -335,6 +372,8 @@ async function diagnose(serial) {
     }
   }
 
+  const rankedPowerActivities = rankPowerActivities(powerActivities);
+
   // 6. сводные подсказки
   const hints = buildHints({ device, packages, assistant, vendorAssistants, suggestedAssistantComponent });
 
@@ -348,7 +387,9 @@ async function diagnose(serial) {
     voiceServices,
     suggestedAssistantComponent,
     settingsApps: settingsPkgs,
-    powerActivities,
+    powerActivities: rankedPowerActivities,
+    recommendedPowerActivity:
+      (rankedPowerActivities.find((a) => a.score >= 80) || {}).component || null,
     googleSettingsActivities,
     hints,
     log,
@@ -589,5 +630,13 @@ module.exports = {
   connect,
   enableTcpip,
   // экспорт парсеров для тестов
-  _internal: { parseProps, parseSettingsList, parsePackageList, parseDevices, parseVoiceServices },
+  _internal: {
+    parseProps,
+    parseSettingsList,
+    parsePackageList,
+    parseDevices,
+    parseVoiceServices,
+    rankPowerActivities,
+    scoreActivity,
+  },
 };

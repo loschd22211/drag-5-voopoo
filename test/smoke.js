@@ -70,10 +70,18 @@ test('диагностика находит Google-пакеты и экраны 
   const report = await adb.diagnose('MOCK000ACE5');
   assert.equal(report.ok, true);
   assert.equal(report.device.model, 'PKG110');
-  assert.equal(report.device.android, '15');
+  assert.equal(report.device.android, '16');
   assert.equal(report.packages.googleApp.installed, true);
   assert.equal(report.packages.gemini.installed, true);
-  assert.ok(report.powerActivities.some((a) => /PowerButton/i.test(a.component)), 'нет экрана кнопки питания');
+  assert.ok(
+    report.powerActivities.some((a) => /PowerMenuSettingsActivity/.test(a.component)),
+    'нет экрана долгого нажатия кнопки питания',
+  );
+  assert.equal(
+    report.recommendedPowerActivity,
+    'com.android.settings/.Settings$PowerMenuSettingsActivity',
+    'рекомендация должна указывать на экран кнопки питания, а не на «расход батареи»',
+  );
   assert.ok(report.googleSettingsActivities.length >= 1, 'нет Google-экрана в настройках');
   assert.ok(report.voiceServices.some((s) => /GsaVoiceInteractionService/.test(s.component)));
   assert.ok(report.suggestedAssistantComponent.startsWith('com.google.'));
@@ -98,7 +106,7 @@ test('открытие экрана настроек по компоненту',
   const res = await adb.openTarget(
     'MOCK000ACE5',
     'component',
-    'com.oplus.settings/.OplusPowerButtonSettingsActivity',
+    'com.android.settings/.Settings$PowerMenuSettingsActivity',
   );
   assert.equal(res.ok, true);
 });
@@ -124,6 +132,41 @@ test('снимок настроек и дифф ловят изменение', 
 test('защита от мусорного компонента', async () => {
   const res = await adb.setAssistant('MOCK000ACE5', 'bad value with spaces;rm -rf');
   assert.equal(res.ok, false);
+});
+
+
+test('ранжирование: реальный список с Ace 5 (ColorOS 16)', () => {
+  const raw = [
+    '.fuelgauge.AdvancedPowerUsageDetailActivity',
+    '.Settings$ButtonNavigationSettingsActivity',
+    '.Settings$DoubleTapPowerSettingsActivity',
+    '.Settings$ManageAssistActivity',
+    '.Settings$NotificationAssistantSettingsActivity',
+    '.Settings$PowerMenuSettingsActivity',
+    '.Settings$PowerUsageAdvancedActivity',
+    'com.oplus.settings.feature.convenient.PowerWakeUpGuideActivity',
+    'com.oplus.settings.feature.onehanded.OneHandedOAssistService',
+    'com.oplus.settings.feature.othersettings.timepower.TimePowerReceiver',
+    'com.oplus.settings.feature.speechassistant.SettingsSpeechAssistantActivity',
+  ].map((cls) => ({ component: `com.android.settings/${cls}`, activity: cls, label: cls }));
+  const ranked = _internal.rankPowerActivities(raw);
+  assert.equal(ranked[0].activity, '.Settings$PowerMenuSettingsActivity');
+  assert.ok(ranked[0].score >= 80);
+  assert.equal(ranked[1].activity, '.Settings$ManageAssistActivity');
+  const junk = ranked.find((a) => /fuelgauge/.test(a.activity));
+  assert.ok(junk.score < 0, '«расход батареи» должен уходить в конец');
+  assert.ok(ranked[ranked.length - 1].score < 0, 'мусор должен быть в конце списка');
+});
+
+test('PowerShell-скрипты сохранены в UTF-8 с BOM (иначе PS 5.1 ломает кириллицу)', () => {
+  const files = ['oneclick.ps1', 'adb-gemini.ps1'];
+  for (const name of files) {
+    const buf = fs.readFileSync(path.join(__dirname, '..', 'scripts', name));
+    assert.ok(
+      buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf,
+      `${name}: нет BOM — Windows PowerShell 5.1 прочитает файл как ANSI и упадёт с ошибками парсера`,
+    );
+  }
 });
 
 (async () => {

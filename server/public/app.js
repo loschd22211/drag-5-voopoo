@@ -198,21 +198,30 @@ function renderDiagnosis(d) {
     power.innerHTML =
       '<div class="hint warn">Не нашёл активности с «power/button» в названии. Открой настройки вручную: «Доступность и удобство → Кнопка питания».</div>';
   } else {
+    const useful = items.filter((a) => a.score >= 0);
+    const junk = items.filter((a) => a.score < 0);
+    const row = (a, first) => `<tr>
+      <td>${first ? '<span class="pill ok">начать здесь</span> ' : ''}${esc(a.label)}</td>
+      <td class="muted small">${esc(a.hint || '')}</td>
+      <td><code>${esc(a.component)}</code></td>
+      <td><button class="btn tiny" data-open-component="${esc(a.component)}">Открыть</button></td>
+    </tr>`;
     power.innerHTML = `
       <table>
-        <thead><tr><th>Экран</th><th>Компонент</th><th></th></tr></thead>
-        <tbody>
-          ${items
-            .map(
-              (a) => `<tr>
-                <td>${esc(a.label)}</td>
-                <td><code>${esc(a.component)}</code></td>
-                <td><button class="btn tiny" data-open-component="${esc(a.component)}">Открыть</button></td>
-              </tr>`,
-            )
-            .join('')}
-        </tbody>
-      </table>`;
+        <thead><tr><th>Экран</th><th>Что это</th><th>Компонент</th><th></th></tr></thead>
+        <tbody>${useful.map((a, i) => row(a, i === 0)).join('')}</tbody>
+      </table>
+      ${
+        junk.length
+          ? `<details class="wifi"><summary>Ещё найдено, но к кнопке питания не относится (${junk.length})</summary>
+             <table><tbody>${junk
+               .map(
+                 (a) => `<tr><td class="muted small">${esc(a.label)}</td><td><code>${esc(a.component)}</code></td>
+                 <td><button class="btn tiny" data-open-component="${esc(a.component)}">Открыть</button></td></tr>`,
+               )
+               .join('')}</tbody></table></details>`
+          : ''
+      }`;
   }
 
   const google = d.googleSettingsActivities || [];

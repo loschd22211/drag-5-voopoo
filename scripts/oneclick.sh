@@ -161,26 +161,64 @@ else
   fi
 fi
 
-# экраны под кнопку питания
-step "Что ещё есть на телефоне (открываю нужный экран)"
-power_activity=""
+# экраны под кнопку питания: собираем все и сортируем по полезности
+step "6/6+  Экраны настроек, которые есть на телефоне"
+NOISE='fuelgauge|PowerUsage|TimePower|PowerOffPrompt|PowerWakeUp|NotificationAssistant|OneHanded|Receiver$|Service$|Provider$|GuideActivity$'
+ALL_ACTS=()
 for pkg in com.oplus.settings com.coloros.settings com.android.settings; do
   printf '%s\n' "$packages" | grep -q "package:$pkg\$" || continue
   while IFS= read -r act; do
+    [ -n "$act" ] && ALL_ACTS+=("$act")
+  done < <("$ADB_BIN" -s "$SERIAL" shell "dumpsys package $pkg" 2>/dev/null \
+             | grep -oE "com\.(oplus|coloros|android)\.settings/[A-Za-z0-9_.\$]+" \
+             | sort -u | grep -iE 'power|button|assist|convenience|gesture' | grep -vEi "$NOISE")
+done
+
+# приоритет: сначала экран долгого нажатия кнопки, потом выбор помощника, потом голосовой помощник
+PRIORITY=('*PowerMenuSettingsActivity' '*PowerButton*' '*ManageAssistActivity' '*SpeechAssistantActivity' '*AssistantSettingsActivity' '*ButtonsAndGestures*' '*ButtonNavigationSettings*' '*ConvenienceTools*' '*DoubleTapPowerSettings*' '*OplusGoogleSettings*')
+RANKED=()
+for pattern in "${PRIORITY[@]}"; do
+  for act in "${ALL_ACTS[@]:-}"; do
     [ -z "$act" ] && continue
-    dim "  $act"
     case "$act" in
-      *PowerButton*|*power*|*ButtonAndGesture*) [ -z "$power_activity" ] && power_activity="$act" ;;
+      $pattern)
+        seen=0
+        for r in "${RANKED[@]:-}"; do [ "$r" = "$act" ] && seen=1 && break; done
+        [ $seen -eq 0 ] && RANKED+=("$act")
+        ;;
     esac
-  done < <("$ADB_BIN" -s "$SERIAL" shell "dumpsys package $pkg" 2>/dev/null | grep -oE "$pkg/[A-Za-z0-9_.$]+" | sort -u | grep -iE 'power|button|assist|convenience|google')
+  done
+done
+power_activity="${RANKED[0]:-}"
+
+idx=0
+for act in "${RANKED[@]:-}"; do
+  idx=$((idx + 1))
+  [ "$idx" -gt 6 ] && break
+  if [ "$idx" -eq 1 ]; then
+    printf '  %s★ %s%s\n' "$C_OK" "$act" "$C_OFF"
+  else
+    printf '  %s%d.%s %s\n' "$C_DIM" "$idx" "$C_OFF" "$act"
+  fi
 done
 
 if [ -n "$power_activity" ]; then
-  sh_ "am start -n $power_activity" >/dev/null 2>&1 && ok "открыл на телефоне экран: $power_activity"
-  dim "Там выбери «Цифровой помощник» вместо меню питания/Breeno."
+  sh_ "am start -n '$power_activity'" >/dev/null 2>&1 \
+    && ok "открыл на телефоне: $power_activity"
+  dim "Там переключи на «Цифровой помощник» (Digital assistant), если есть выбор."
 else
   sh_ 'am start -a android.settings.MANAGE_DEFAULT_APPS_SETTINGS' >/dev/null 2>&1 \
     && ok "открыл «Приложения по умолчанию» на телефоне"
+fi
+
+if [ ${#RANKED[@]} -gt 1 ]; then
+  printf '\n%sЕсли нужный экран не открылся — вставь в терминал нужную команду:%s\n' "$C_DIM" "$C_OFF"
+  n=0
+  for act in "${RANKED[@]}"; do
+    n=$((n + 1))
+    [ "$n" -gt 3 ] && break
+    printf "  %s -s %s shell am start -n '%s'\n" "$ADB_BIN" "$SERIAL" "$act"
+  done
 fi
 
 printf '\n%s— Готово —%s\n' "$C_B" "$C_OFF"

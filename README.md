@@ -21,6 +21,10 @@
 
 **Windows:** двойной клик по `scripts\oneclick.cmd`
 
+> Если PowerShell выдаёт ошибки парсера и кракозябры (`РЅРµ РЅР°Р№РґРµРЅ`) — это кодировка,
+> а не логика: файл `.ps1` должен быть в UTF-8 **с BOM**. Лечение в одну команду —
+> [`docs/windows-encoding.md`](docs/windows-encoding.md).
+
 **Linux / macOS:**
 
 ```bash
@@ -99,6 +103,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir.FullName 'sc
 | `tools/mock-adb` | Фейковый adb: демо-режим без телефона, на нём же гоняются тесты |
 | `test/smoke.js` | 13 проверок логики без реального устройства |
 | `docs/coloros-cn-notes.md` | Что делать, если прошивка блокирует настройку (китайские сборки) |
+| `docs/windows-encoding.md` | Если PowerShell ругается на «отсутствует `}`» и показывает кракозябры |
 
 ---
 

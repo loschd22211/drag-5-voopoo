@@ -56,14 +56,14 @@ const PROPS = `[ro.product.brand]: [OnePlus]
 [ro.product.name]: [OP5D1L1]
 [ro.product.device]: [OP5D1L1]
 [ro.product.marketname]: [OnePlus Ace 5]
-[ro.build.version.release]: [15]
+[ro.build.version.release]: [16]
 [ro.build.version.sdk]: [35]
-[ro.build.display.id]: [PLK110_11.A.62]
-[ro.build.version.ota]: [PLK110_11.A.62_202504011200]
+[ro.build.display.id]: [V16.1.0]
+[ro.build.version.ota]: [V16.1.0]
 [ro.build.version.incremental]: [1743500000]
 [ro.build.version.security_patch]: [2025-03-05]
-[ro.build.version.oplusrom]: [ColorOS 15.0.1]
-[ro.build.region]: [CN]
+[ro.build.version.oplusrom]: [ColorOS 16]
+[ro.build.region]: []
 [ro.product.locale]: [zh-CN]`;
 
 const PACKAGES = [
@@ -72,7 +72,7 @@ const PACKAGES = [
   'com.google.android.gms',
   'com.google.android.gsf',
   'com.android.vending',
-  'com.oplus.settings',
+  'com.android.settings',
   'com.oplus.appmarket',
   'com.heytap.market',
   'com.oplus.breeno',
@@ -82,19 +82,26 @@ const PACKAGES = [
 ];
 
 const SETTINGS_PACKAGE_DUMP = `Packages:
-  Package [com.oplus.settings] (1a2b3c):
+  Package [com.android.settings] (1a2b3c):
     userId=1000
     Activities:
-      com.oplus.settings/.Settings
-      com.oplus.settings/.OplusPowerButtonSettingsActivity
-      com.oplus.settings/.OplusButtonsAndGesturesActivity
-      com.oplus.settings/.OplusConvenienceToolsActivity
-      com.oplus.settings/.OplusAssistantSettingsActivity
-      com.oplus.settings/.OplusGoogleSettingsActivity
-      com.oplus.settings/.OplusGoogleAccountActivity
-      com.oplus.settings/.OplusAccessibilitySettingsActivity
-      com.oplus.settings/.OplusDefaultAppsActivity
-      com.oplus.settings/.OplusBatterySettingsActivity
+      com.android.settings/.fuelgauge.AdvancedPowerUsageDetailActivity
+      com.android.settings/.Settings$ButtonNavigationSettingsActivity
+      com.android.settings/.Settings$DoubleTapPowerSettingsActivity
+      com.android.settings/.Settings$ManageAssistActivity
+      com.android.settings/.Settings$NotificationAssistantSettingsActivity
+      com.android.settings/.Settings$PowerMenuSettingsActivity
+      com.android.settings/.Settings$PowerUsageAdvancedActivity
+      com.android.settings/.Settings$PowerUsageSummaryActivity
+      com.android.settings/com.oplus.settings.feature.convenient.PowerWakeUpGuideActivity
+      com.android.settings/com.oplus.settings.feature.onehanded.OneHandedOAssistService
+      com.android.settings/com.oplus.settings.feature.othersettings.timepower.PowerOffPromptActivity
+      com.android.settings/com.oplus.settings.feature.othersettings.timepower.TimePowerReceiver
+      com.android.settings/com.oplus.settings.feature.othersettings.timepower.TimePowerSetChangedReceiver
+      com.android.settings/com.oplus.settings.feature.speechassistant.SettingsSpeechAssistantActivity
+      com.android.settings/com.oplus.settings.OplusSettingsActivity$AiPowerSupplyActivity
+      com.android.settings/com.oplus.settings.OplusSettingsActivity$OplusGoogleSettingsActivity
+      com.android.settings/com.oplus.settings.OplusSettingsActivity$TimePowerSettingsActivity
 `;
 
 function settingsListSecure(state) {
@@ -220,7 +227,7 @@ function handle(args) {
     return 0;
   }
 
-  if (/^dumpsys package com\.oplus\.settings$/.test(sh)) {
+  if (/^dumpsys package (com\.oplus\.settings|com\.android\.settings)$/.test(sh)) {
     out(SETTINGS_PACKAGE_DUMP);
     return 0;
   }
