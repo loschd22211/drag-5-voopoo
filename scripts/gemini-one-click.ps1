@@ -2,7 +2,8 @@
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gemini-one-click.ps1
 #   ... -Restore   вернуть кнопку в заводское состояние
-#   ... -Test      только замер: 5 попыток кнопкой питания и 5 жестом, с секундами
+#   ... -Test      только замер: слушает окна, пока ты жмёшь кнопку и делаешь жест
+#   ... -Sweep     перебор последнего ключа ColorOS (side_button): по одной попытке на значение
 #
 # Что делает сам:
 #   1. находит adb (PATH, winget-папка, кэш скрипта)
@@ -25,7 +26,8 @@ param(
   [string]$Adb = "",
   [string]$Serial = "",
   [switch]$Restore,
-  [switch]$Test
+  [switch]$Test,
+  [switch]$Sweep
 )
 
 $ErrorActionPreference = "Continue"
@@ -290,6 +292,80 @@ function Test-Assistant {
   Say-Dim "Повторить замер: -Test. Откат: -Restore"
 }
 
+function Invoke-PressProbe {
+  param([string]$Hint = 'зажми питание на 2 секунды', [int]$Seconds = 10)
+
+  Sh 'input keyevent 3' | Out-Null
+  Start-Sleep -Milliseconds 400
+  $base = (Get-WindowDump).Names
+  Say-Dim ("   {0} — {1} секунд" -f $Hint, $Seconds)
+
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  $new = @()
+  $assist = $false
+  $powerMenu = $false
+  while ($sw.Elapsed.TotalSeconds -lt $Seconds) {
+    $d = Get-WindowDump
+    if ($d.Focus -match 'googlequicksearchbox|apps\.bard') { $assist = $true; break }
+    foreach ($n in $d.Names) {
+      if ($base -contains $n -or $new -contains $n) { continue }
+      $new += $n
+      if ($n -match 'google|robin|assist|voice') { $assist = $true }
+      if ($n -match 'ActionsDialog') { $powerMenu = $true }
+    }
+    if ($assist) { break }
+    if ($sw.Elapsed.TotalSeconds -gt 4 -and $powerMenu) { break }
+  }
+  return [pscustomobject]@{ Assist = $assist; PowerMenu = $powerMenu; New = $new }
+}
+
+# Последний неотработанный ключ с устройства: global side_button.
+# Что именно он переключает на CN-прошивке, достоверно неизвестно (возможно,
+# ползунок режимов), поэтому значения перебираются по одному, с возвратом.
+function Sweep-SideButton {
+  Say-Step "Перебор side_button: последний шанс для кнопки питания"
+  $orig = (Sh 'settings get global side_button').Trim()
+  Say-Dim "сейчас side_button=$orig"
+  Say-Dim "каждый раунд: скрипт ставит значение, ты зажимаешь питание 2 секунды"
+  Say-Dim "если после прогона изменится режим звука — это побочка, исходное значение вернётся"
+
+  $values = @('0', '2', '3', '4', '1')
+  $log = @()
+  $found = ''
+  foreach ($v in $values) {
+    Sh ("settings put global side_button {0}" -f $v) | Out-Null
+    $now = (Sh 'settings get global side_button').Trim()
+    Say-Step ("side_button=$now")
+    $r = Invoke-PressProbe -Hint 'зажми питание на 2 секунды'
+    if ($r.New.Count -gt 0) { Say-Dim ("   новые окна: " + ($r.New -join ', ')) }
+    if ($r.Assist) {
+      Say-Ok ("side_button=$now открывает помощника")
+      $found = $now
+      $log += "side_button=$now: ДА"
+      break
+    } elseif ($r.PowerMenu) {
+      Say-No "   снова меню выключения"
+      $log += "side_button=$now: меню выключения"
+    } else {
+      Say-No "   ничего не произошло"
+      $log += "side_button=$now: тихо"
+    }
+  }
+
+  Write-Host ""
+  foreach ($l in $log) { Say-Dim $l }
+  if ($found -ne '') {
+    Say-Ok "рабочее значение запомнено: side_button=$found (ключ уже стоит)"
+    Say-Dim "проверь ещё раз вручную: удержание питания должно открывать Gemini"
+  } else {
+    Sh ("settings put global side_button {0}" -f $orig) | Out-Null
+    $back = (Sh 'settings get global side_button').Trim()
+    Say-No "ни одно значение не открыло помощника — кнопка питания на этой прошивке не переназначается"
+    Say-Dim ("вернул side_button=$back")
+    Say-Dim "рабочий путь остаётся один: смахнуть от нижнего угла (лучше с экрана блокировки)"
+  }
+}
+
 function Undo-All {
   Say-Step "Возвращаю заводское поведение"
   Sh "settings --user 0 put secure assistant $GoogleDefault" | Out-Null
@@ -319,6 +395,13 @@ Say-Dim "прошивка: $rom"
 
 if ($Restore) {
   Undo-All
+  Write-Host ""
+  Read-Host "Enter — закрыть"
+  exit 0
+}
+
+if ($Sweep) {
+  Sweep-SideButton
   Write-Host ""
   Read-Host "Enter — закрыть"
   exit 0

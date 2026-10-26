@@ -347,6 +347,10 @@ test('плеер на локскрине и AOSP-ключи кнопки заш�
   assert.ok(!/Sh 'input keyevent --longpress 26'/.test(src), 'удержание питания больше не эмулируется');
   // KEYCODE_ASSIST на ColorOS поднимает окно через раз: эмулируем именно удержание питания
   assert.ok(src.includes('начинай сразу'), 'скрипт должен предупредить, что нажимать надо прямо сейчас');
+  // последний неотработанный ключ ColorOS: global side_button, перебор с возвратом
+  assert.ok(src.includes('Sweep-SideButton'), 'нужен режим -Sweep: перебор side_button');
+  assert.ok(src.includes('settings put global side_button'), 'side_button должен выставляться');
+  assert.ok(src.includes('вернул side_button'), 'после неудачи значение возвращается');
   assert.ok(!src.includes("input keyevent KEYCODE_ASSIST' | Out-Null"), 'KEYCODE_ASSIST больше не единственная проверка');
   assert.ok(src.includes('cached_apps_freezer'), 'нужно снимать заморозку фоновых приложений');
 });
