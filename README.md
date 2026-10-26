@@ -106,6 +106,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir.FullName 'sc
 | `docs/windows-encoding.md` | Если PowerShell ругается на «отсутствует `}`» и показывает кракозябры |
 | `scripts/breeno-off.sh` / `breeno-off.ps1` | Снять фирменный Breeno, который перехватывает кнопку (обратимо) |
 | `scripts/gemini-trigger.ps1` | Если кнопку не отдаёт даже suspend: ставит ColorGoogle, который забирает кнопку питания и открывает Gemini |
+| `scripts/power-key-reset.ps1` | Возвращает кнопку питания в заводское состояние и убирает ColorGoogle (обратимо) |
 | `scripts/debloat-market.ps1` | Убирает магазин HeyTap и сканер APK, чтобы сторонние приложения ставились без «проверки» |
 
 ---
@@ -231,6 +232,7 @@ adb shell settings delete secure voice_interaction_service
 | Значение записалось, но кнопка открывает Breeno | Breeno ставит свой обработчик клавиши поверх роли помощника | `scripts/breeno-off.sh` / `breeno-off.ps1`: перебирают `disable-user → suspend → hide → uninstall` и проверяют результат по `dumpsys`. На ColorOS 16 обычно срабатывает `suspend` |
 | Значение записалось, но кнопка всё равно открывает меню питания | системный обработчик кнопки игнорирует помощника | `docs/coloros-cn-notes.md`, раздел «Activity Launcher / MiCTS» |
 | Breeno снят (`speechassist` off, `assistantscreen` suspended), а кнопка всё равно зовёт Breeno | вызов зашит в обработчик клавиши на уровне фреймворка | `scripts/gemini-trigger.ps1` — ставит ColorGoogle, он перехватывает кнопку сам |
+| `pm uninstall` → `DELETE_FAILED_INTERNAL_ERROR` | ColorOS не отдаёт пакет этим путём | `scripts/power-key-reset.ps1` перебирает `pm uninstall --user 0`, `cmd package uninstall`, затем `pm suspend` |
 | Gemini: «не поддерживается в вашей стране» | региональная блокировка Google (IP + регион аккаунта) | см. 2.99: проверка через инкогнито и country-association-form |
 | Кнопка питания открывает меню выключения, помощник молчит | нет Google-приложения либо не включён жест | `input keyevent KEYCODE_ASSIST` как проверка; `assist_gesture_enabled=1`; см. 2.98 |
 | `am start -a android.intent.action.ASSIST` → `ResolverActivity` | никто не зарегистрировал этот intent (норма для современного помощника) | проверять через `KEYCODE_ASSIST`, а не через intent |
