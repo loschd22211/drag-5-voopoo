@@ -279,6 +279,14 @@ test('скрипт деблоата: имена функций не конфли
   assert.ok(src.includes('-Restore'), 'должен быть режим возврата');
 });
 
+test('READ_LOGS выдаётся app-op, а не только pm grant', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'gemini-trigger.ps1'), 'utf8');
+  // pm grant READ_LOGS на Android 13+ падает: SecurityException GRANT_RUNTIME_PERMISSIONS
+  assert.ok(src.includes("appops set $Pkg READ_LOGS allow"), 'нужен app-op READ_LOGS как основной путь');
+  assert.ok(src.includes('appops get $Pkg READ_LOGS'), 'результат надо проверять, а не считать успехом');
+  assert.ok(src.includes('[switch]$Status'), 'нужен режим -Status для диагностики без изменений');
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {

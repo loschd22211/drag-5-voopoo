@@ -2,6 +2,7 @@
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\gemini-trigger.ps1
 #   ... -Restore   вернуть как было (остановить агент, вернуть assistant/voice из бэкапа)
+#   ... -Status    ничего не менять: показать состояние приложения, агента и READ_LOGS
 #
 # Что делает по шагам:
 #   1. находит adb (или скачивает platform-tools)
@@ -9,7 +10,8 @@
 #   3. скачивает APK ColorGoogle по прямой ссылке (GitHub API только как резерв)
 #      и сверяет SHA-256, если доступен SHA256SUMS
 #   4. ставит APK с -r -g (сразу с разрешениями)
-#   5. выдаёт READ_LOGS, назначает Google помощником, включает оверлей и уведомления
+#   5. выдаёт READ_LOGS через app-op (pm grant на новых Android из shell не проходит),
+#      назначает Google помощником, включает оверлей и уведомления
 #   6. просит один раз доделать три тумблера в приложении (это только руками)
 #   7. запускает shell-агент по официальной инструкции проекта и проверяет статус
 #
@@ -22,6 +24,7 @@ param(
   [string]$Version = "v16.3.0",
   [string]$ApkPath = "",
   [switch]$Restore,
+  [switch]$Status,
   [switch]$SkipActivate
 )
 
@@ -197,6 +200,55 @@ function Save-Backup {
   }
 }
 
+function Show-State {
+  Step "Состояние ColorGoogle"
+  $path = Sh "pm path $Pkg"
+  if (-not $path) {
+    Warn "приложение не установлено"
+    return
+  }
+  Dim ("apk: " + (($path -split "`r?`n" | Where-Object { $_ })[0] -replace '^package:', ''))
+  $readLogs = Sh "appops get $Pkg READ_LOGS"
+  if ($readLogs -match 'READ_LOGS:\s*allow') { Ok "READ_LOGS: разрешён" }
+  else { Warn "READ_LOGS: $readLogs" }
+
+  $raw = Sh "content call --uri content://$Pkg.desktopsearch --method status"
+  Dim "ответ провайдера:"
+  Write-Host $raw
+
+  if ($raw -match 'runEnabled=(true|false)') {
+    $run = $Matches[1]
+  } else {
+    # провайдер не ответил — дальше гадать бессмысленно, показываем как есть
+    if ($raw -match 'ADB shell required') {
+      Warn "adb работает не как shell (uid 2000) — приложение отказывает. Перезапусти adb server: adb kill-server; adb start-server"
+    } elseif ($raw -match 'SecurityException|permission') {
+      Warn "нет доступа к провайдеру — обычно значит, что adb-сессия без разрешения DUMP"
+    } else {
+      Warn "главный переключатель не читается"
+      Dim "1. Открой ColorGoogle на телефоне вручную (не через скрипт)."
+      Dim "2. Включи самый верхний переключатель — главный (Main switch / Enable service)."
+      Dim "3. Вернись сюда и запусти:  -Status"
+    }
+    return
+  }
+
+  if ($run -eq 'true') { Ok "главный переключатель: включён" }
+  else {
+    Warn "главный переключатель: ВЫКЛЮЧЕН"
+    Dim "Открой приложение и включи его — без этого агент не стартует."
+    return
+  }
+
+  if ($raw -match 'agentConnected=true') { Ok "агент подключён" }
+  else { Warn "агент не запущен (нужен шаг активации)" }
+
+  $agentPid = Sh 'pidof colorgoogle-search'
+  if ($agentPid) { Dim "процесс агента: $agentPid" } else { Dim "процесса colorgoogle-search нет" }
+  if ($raw -match 'lifecycle=([A-Z]+)') { Dim "lifecycle: $($Matches[1])" }
+  if ($raw -match 'wakeActive=(true|false)') { Dim "wakeActive: $($Matches[1])" }
+}
+
 # ------------------------------------------------------------------ main
 
 Resolve-Adb
@@ -209,6 +261,13 @@ Step "Телефон"
 Dim "модель:   $model"
 Dim "Android:  $android"
 Dim "прошивка: $rom"
+
+if ($Status) {
+  Show-State
+  Write-Host ""
+  Read-Host "Enter — закрыть"
+  exit 0
+}
 
 # --------------------------------------------------------------- restore
 
@@ -260,8 +319,13 @@ if ($install -match 'Success') {
 }
 
 Step "Разрешения и роль помощника"
-$grant = Sh "pm grant $Pkg android.permission.READ_LOGS"
-if ($grant -match 'Error|Exception') { Warn "READ_LOGS: $grant" } else { Ok "READ_LOGS выдан" }
+# READ_LOGS — не runtime-разрешение: `pm grant` из shell на Android 13+ падает с
+# SecurityException (GRANT_RUNTIME_PERMISSIONS). Рабочий путь — app-op, им shell управляет.
+$null = Sh "pm grant $Pkg android.permission.READ_LOGS"
+$null = Sh "appops set $Pkg READ_LOGS allow"
+$readLogs = Sh "appops get $Pkg READ_LOGS"
+if ($readLogs -match 'READ_LOGS:\s*allow') { Ok "READ_LOGS разрешён (appops)" }
+else { Warn "READ_LOGS не применился: $readLogs" }
 
 Sh "settings --user 0 put secure assistant $GoogleService" | Out-Null
 Sh "settings --user 0 put secure voice_interaction_service $GoogleService" | Out-Null
@@ -326,10 +390,12 @@ if (-not $SkipActivate) {
 
   if ($result -match 'runEnabled=false|Main switch is off') {
     Warn "главный переключатель ещё выключен — включи его в приложении и запусти скрипт снова"
-  } elseif ($result -match 'runEnabled=true|running|connected|status') {
+  } elseif ($result -match 'agentConnected=true|Agent already exists') {
     Ok "агент запущен"
+    if ($result -match 'wakeActive=false') { Warn "wakeActive=false: агент живой, но события кнопки не читает — проверь READ_LOGS" }
   } else {
-    Warn "проверь статус вручную: content call --uri content://$Pkg.desktopsearch --method status"
+    Warn "агент не стартовал — смотрю, что отвечает приложение"
+    Show-State
   }
 }
 
