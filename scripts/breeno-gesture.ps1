@@ -18,7 +18,7 @@ param(
   [switch]$Restore
 )
 
-$ScriptVersion = '2026-10-27.6'
+$ScriptVersion = '2026-10-27.7'
 $ErrorActionPreference = "Continue"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -94,6 +94,16 @@ function Watch-Press {
   return $seen
 }
 
+function Test-PressForAssistant {
+  param([string]$Hint)
+  Sh 'input keyevent 3' | Out-Null
+  Start-Sleep -Milliseconds 400
+  Write-Dim $Hint
+  $seen = Watch-Press -Seconds 10
+  $gem = @($seen | Where-Object { $_ -match 'googlequicksearchbox|apps\.bard' }).Count -gt 0
+  return [pscustomobject]@{ Gemini = $gem; Seen = $seen }
+}
+
 # ---------------------------------------------------------------- main
 
 Connect-Adb
@@ -119,6 +129,7 @@ Write-Ok "готово"
 Write-Step "Ловлю, что ром запускает по жесту"
 Sh 'logcat -c' | Out-Null
 Write-Dim "зажми полосу жестов и держи 1-2 секунды"
+$cmpPkg = ''
 $seenBefore = Watch-Press -Seconds 12
 $log = Sh 'logcat -d -t 400'
 $hits = @()
@@ -132,6 +143,13 @@ if ($hits.Count -eq 0) {
   $cmp = [regex]::Match(($hits -join ' '), 'cmp=([A-Za-z0-9_.]+)/([A-Za-z0-9_.$]+)')
   if ($cmp.Success) { Write-Dim ("компонент: " + $cmp.Groups[1].Value + "/" + $cmp.Groups[2].Value) }
 }
+# окно тоже говорит, кто открылся — берём пакет из фокуса, если журнал молчит
+foreach ($f in $seenBefore) {
+  $mPkg = [regex]::Match($f, 'u0 ([A-Za-z0-9_.]+)/')
+  if ($mPkg.Success -and $mPkg.Groups[1].Value -ne 'com.android.launcher') { $cmpPkg = $mPkg.Groups[1].Value }
+}
+if ($cmpPkg -eq '') { $cmpPkg = 'com.heytap.speechassist' }
+if ($cmpPkg -ne '') { Write-Dim ("держит жест: " + $cmpPkg) }
 
 Write-Step "Выдаю Google роль системного ассистента"
 $r = Sh ("cmd role add-role-holder --user 0 android.app.role.ASSISTANT " + $GooglePkg)
@@ -150,6 +168,34 @@ if ($gotGemini) {
   if ($seenAfter.Count -gt 0) { Write-Dim ("в фокусе было: " + ($seenAfter -join ' | ')) }
   Write-Dim "Скорее всего обработчик жеста зашит в SystemUI рома и роль ему не указ"
   Write-Dim "Вернуть Breeno как было: эта же команда с ключом -Restore"
+}
+
+Write-Step "Гашу пакет, который держит жест"
+# Из замера видно, кто открывается по жесту. Если погасить этот пакет, у SystemUI
+# остаётся два варианта: ничего не делать или упасть на роль ASSISTANT (Google).
+$pkg = 'com.heytap.speechassist'
+if ($cmpPkg -ne '') { $pkg = $cmpPkg }
+Write-Dim ("пакет: " + $pkg)
+
+$found = ''
+Sh ("pm disable-user --user 0 " + $pkg) | Out-Null
+$r1 = Test-PressForAssistant -Hint "зажми полосу (пакет отключён)"
+if ($r1.Gemini) { $found = 'отключён' }
+
+if (-not $found) {
+  Sh ("pm uninstall --user 0 " + $pkg) | Out-Null
+  $r2 = Test-PressForAssistant -Hint "зажми полосу (пакет снят для пользователя)"
+  if ($r2.Gemini) { $found = 'снят' }
+}
+
+Write-Host ""
+if ($found -ne '') {
+  Write-Ok ("Работает: жест открывает Google, пакет " + $found)
+  Write-Dim ("вернуть Breeno: cmd package install-existing --user 0 " + $pkg)
+} else {
+  Write-Warn "Даже без этого пакета Google по жесту не открывается"
+  Write-Dim "Значит SystemUI рома просто проглатывает жест, на роль ASSISTANT он не падает"
+  Write-Dim ("пакет оставил отключённым, чтобы не видеть «страница недоступна»; вернуть: cmd package install-existing --user 0 " + $pkg)
 }
 
 Write-Host ""

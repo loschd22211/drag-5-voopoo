@@ -423,6 +423,10 @@ test('breeno-gesture: пробует роль ASSISTANT и умеет верну
   assert.ok(src.includes('cmd package install-existing'), 'Breeno возвращается в работу перед опытом');
   assert.ok(src.includes('[switch]$Restore'), 'нужен откат');
   assert.ok(src.includes('logcat'), 'компонент жеста снимается из журнала');
+  // пойманный пакет гасим и проверяем, не падает ли жест на роль ASSISTANT
+  assert.ok(src.includes('pm disable-user --user 0') || src.includes('pm disable-user --user 0 ', ), 'пакет гасится');
+  assert.ok(src.includes('pm uninstall --user 0'), 'и снимается для пользователя как последний шаг');
+  assert.ok(src.includes('Test-PressForAssistant'), 'каждый шаг проверяется нажатием');
   assert.ok(src.includes('$ScriptVersion'), 'версия печатается');
 });
 
