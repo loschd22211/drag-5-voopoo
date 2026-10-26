@@ -231,6 +231,15 @@ function Set-ReadLogsAllowed {
   return $false
 }
 
+function Explain-NoAgent {
+  # 16.3.0 в этом состоянии отдаёт только error=Agent not connected: приложение
+  # на связи, агент не запущен, а состояние главного переключателя не сообщает.
+  Warn "приложение на связи, агент не запущен"
+  Dim "Главный переключатель включается в самом приложении: в мастере Setup"
+  Dim "пролистай страницы кнопкой Continue до переключателя Main switch."
+  Dim "После этого запусти установщик ещё раз — он поднимет агент."
+}
+
 function Show-State {
   Step "Состояние ColorGoogle"
   $path = Sh "pm path $Pkg"
@@ -252,6 +261,10 @@ function Show-State {
     $run = $Matches[1]
   } else {
     # провайдер не ответил — дальше гадать бессмысленно, показываем как есть
+    if ($raw -match 'Agent not connected') {
+      Explain-NoAgent
+      return
+    }
     if ($raw -match 'ADB shell required') {
       Warn "adb работает не как shell (uid 2000) — приложение отказывает. Перезапусти adb server: adb kill-server; adb start-server"
     } elseif ($raw -match 'SecurityException|permission') {
