@@ -6,7 +6,7 @@ on:
       - 'windows/GlassDock/**'
       - '.github/workflows/glassdock.yml'
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
@@ -25,3 +25,16 @@ jobs:
           name: GlassDock-win-x64
           path: artifacts/GlassDock/
           if-no-files-found: error
+      - name: Package preview
+        shell: pwsh
+        run: |
+          Compress-Archive -Path artifacts/GlassDock/* -DestinationPath GlassDock-0.2.0-win-x64.zip
+          $hash = (Get-FileHash GlassDock-0.2.0-win-x64.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  GlassDock-0.2.0-win-x64.zip" | Set-Content SHA256SUMS.txt -Encoding ascii
+      - name: Publish preview release
+        if: github.ref == 'refs/heads/arena/e49914cd-drag-5-voopoo'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create glassdock-v0.2.0 GlassDock-0.2.0-win-x64.zip SHA256SUMS.txt --target $env:GITHUB_SHA --prerelease --title "GlassDock 0.2.0 preview" --notes "Windows x64 preview. Build verified on Windows; interactive UI and performance not yet tested. Translucent panels, not true blur. Unsigned executable. No installer, wallpaper changes, startup changes or administrator rights. See included README."
