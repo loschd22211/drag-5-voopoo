@@ -24,6 +24,8 @@ public static class Program
     [STAThread]
     public static void Main()
     {
+        using var instance = new System.Threading.Mutex(true, "Local\\GlassDock.Desktop", out bool first);
+        if (!first) { MessageBox.Show("GlassDock уже запущен."); return; }
         var app = new Application();
         app.Run(new Dock());
     }
@@ -47,6 +49,7 @@ public class Dock : Window
     public Dock()
     {
         Title = "GlassDock";
+        UseLayoutRounding = true; SnapsToDevicePixels = true; FontFamily = new FontFamily("Segoe UI");
         WindowStyle = WindowStyle.None; AllowsTransparency = true; Background = Brushes.Transparent;
         ResizeMode = ResizeMode.NoResize; ShowInTaskbar = true; Topmost = false;
         SizeToContent = SizeToContent.WidthAndHeight;
@@ -58,7 +61,7 @@ public class Dock : Window
         try
         {
             if (File.Exists(config)) groups = JsonSerializer.Deserialize<List<Group>>(File.ReadAllText(config)) ?? new();
-            if (groups.Any(g => g is null || g.Items is null || g.Items.Any(i => i is null))) throw new InvalidDataException("Invalid groups");
+            if (groups.Any(g => g is null || g.Items is null || g.Items.Any(i => i is null || string.IsNullOrWhiteSpace(i.Path) || i.Name is null))) throw new InvalidDataException("Invalid groups");
         }
         catch (Exception ex)
         {
@@ -96,6 +99,16 @@ public class Dock : Window
         presenter.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
         border.AppendChild(presenter);
         button.Template = new ControlTemplate(typeof(Button)) { VisualTree = border };
+        var hover = new ScaleTransform(1, 1);
+        button.RenderTransform = hover; button.RenderTransformOrigin = new Point(.5, .5);
+        void Hover(double target)
+        {
+            var time = TimeSpan.FromMilliseconds(SystemParameters.ClientAreaAnimation ? 120 : 1);
+            hover.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(target, time));
+            hover.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(target, time));
+        }
+        button.MouseEnter += (_, _) => Hover(1.06);
+        button.MouseLeave += (_, _) => Hover(1);
         button.Click += (_, _) => action(); return button;
     }
     bool Save()
@@ -114,7 +127,20 @@ public class Dock : Window
         dock.Children.Clear();
         foreach (var group in groups)
         {
-            var button = Button("▦\n" + group.Name, () => Open(group));
+            var button = Button("", () => Open(group));
+            var tile = new StackPanel { Margin = new Thickness(5) };
+            var preview = new WrapPanel { Width = 40, Height = 40 };
+            foreach (var item in group.Items.Take(4))
+            {
+                var icon = ShellIcons.Get(item.Path);
+                if (icon != null) preview.Children.Add(new Image { Source = icon, Width = 18, Height = 18, Margin = new Thickness(1) });
+            }
+            if (group.Items.Count == 0) preview.Children.Add(new TextBlock { Text = "▦", FontSize = 28 });
+            tile.Children.Add(preview);
+            tile.Children.Add(new TextBlock { Text = group.Name, MaxWidth = 64, TextTrimming = TextTrimming.CharacterEllipsis, TextAlignment = TextAlignment.Center });
+            button.Content = tile; button.ToolTip = group.Name;
+            button.AllowDrop = true;
+            button.Drop += (_, e) => { if (e.Data.GetData(DataFormats.FileDrop) is string[] paths) AddPaths(group, paths); };
             var menu = new ContextMenu();
             var remove = new MenuItem { Header = "Удалить группу (не файлы)" };
             remove.Click += (_, _) =>
@@ -143,6 +169,14 @@ public class Dock : Window
         foreach (var entry in group.Items)
         {
             var button = Button(entry.Name, () => Launch(entry), 108); button.ToolTip = entry.Path;
+            var icon = ShellIcons.Get(entry.Path);
+            if (icon != null)
+            {
+                var tile = new StackPanel { Margin = new Thickness(6), Width = 94 };
+                tile.Children.Add(new Image { Source = icon, Width = 40, Height = 40, Margin = new Thickness(0, 0, 0, 6) });
+                tile.Children.Add(new TextBlock { Text = entry.Name, TextTrimming = TextTrimming.CharacterEllipsis, TextAlignment = TextAlignment.Center });
+                button.Content = tile;
+            }
             var menu = new ContextMenu(); var remove = new MenuItem { Header = "Убрать ярлык (не файл)" };
             remove.Click += (_, _) => { group.Items.Remove(entry); Save(); active = null; Open(group); };
             menu.Items.Add(remove); button.ContextMenu = menu; grid.Children.Add(button);
@@ -173,10 +207,16 @@ public class Dock : Window
     {
         var picker = new OpenFileDialog { Multiselect = true, DereferenceLinks = false, Filter = "Ярлыки и программы|*.lnk;*.exe|Все файлы|*.*" };
         if (picker.ShowDialog(this) != true) return;
-        foreach (var path in picker.FileNames)
-            if (!group.Items.Any(i => i.Path.Equals(path, StringComparison.OrdinalIgnoreCase)))
-                group.Items.Add(new Entry { Name = System.IO.Path.GetFileNameWithoutExtension(path), Path = path });
-        Save(); active = null; Open(group);
+        AddPaths(group, picker.FileNames);
+    }
+    void AddPaths(Group group, IEnumerable<string> paths)
+    {
+        foreach (var path in paths)
+        {
+            if ((!File.Exists(path) && !Directory.Exists(path)) || group.Items.Any(i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase))) continue;
+            group.Items.Add(new Entry { Name = System.IO.Path.GetFileNameWithoutExtension(path), Path = path });
+        }
+        Save(); RenderDock(); active = null; Open(group);
     }
     void AddFolder(Group group)
     {

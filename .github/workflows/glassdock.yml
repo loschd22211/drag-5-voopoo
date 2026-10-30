@@ -17,6 +17,9 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Publish native Windows desktop app
         run: dotnet publish windows/GlassDock/GlassDock.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts/GlassDock
+      - name: Include usage guide
+        shell: pwsh
+        run: Copy-Item windows/GlassDock/README.md artifacts/GlassDock/README.md
       - uses: actions/upload-artifact@v4
         with:
           name: GlassDock-win-x64
