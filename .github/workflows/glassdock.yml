@@ -6,7 +6,7 @@ on:
       - 'windows/GlassDock/**'
       - '.github/workflows/glassdock.yml'
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
@@ -17,8 +17,24 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Publish native Windows desktop app
         run: dotnet publish windows/GlassDock/GlassDock.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts/GlassDock
+      - name: Include usage guide
+        shell: pwsh
+        run: Copy-Item windows/GlassDock/README.md artifacts/GlassDock/README.md
       - uses: actions/upload-artifact@v4
         with:
           name: GlassDock-win-x64
           path: artifacts/GlassDock/
           if-no-files-found: error
+      - name: Package preview
+        shell: pwsh
+        run: |
+          Compress-Archive -Path artifacts/GlassDock/* -DestinationPath GlassDock-0.2.0-win-x64.zip
+          $hash = (Get-FileHash GlassDock-0.2.0-win-x64.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  GlassDock-0.2.0-win-x64.zip" | Set-Content SHA256SUMS.txt -Encoding ascii
+      - name: Publish preview release
+        if: github.ref == 'refs/heads/arena/e49914cd-drag-5-voopoo'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create glassdock-v0.2.0 GlassDock-0.2.0-win-x64.zip SHA256SUMS.txt --target $env:GITHUB_SHA --prerelease --title "GlassDock 0.2.0 preview" --notes "Windows x64 preview. Build verified on Windows; interactive UI and performance not yet tested. Translucent panels, not true blur. Unsigned executable. No installer, wallpaper changes, startup changes or administrator rights. See included README."
