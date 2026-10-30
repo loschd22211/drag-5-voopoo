@@ -3,3 +3,8 @@ node_modules/
 *.log
 /tmp/
 /snapshots/
+
+# Native Windows application build outputs
+**/bin/
+**/obj/
+/artifacts/
