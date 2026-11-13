@@ -135,7 +135,7 @@ test('защита от мусорного компонента', async () => {
 });
 
 
-test('ранжирование: реальный список с Ace 5 (ColorOS 16)', () => {
+test('ранжирование: реальный список с Ace 5 (ColorOS 17)', () => {
   const raw = [
     '.fuelgauge.AdvancedPowerUsageDetailActivity',
     '.Settings$ButtonNavigationSettingsActivity',
@@ -169,7 +169,7 @@ test('PowerShell-скрипты сохранены в UTF-8 с BOM (иначе P
   }
 });
 
-test('фирменные ассистенты: находит части Breeno на ColorOS 16', async () => {
+test('фирменные ассистенты: находит части Breeno на ColorOS 17', async () => {
   const res = await adb.listVendorAssistants('MOCK000ACE5');
   assert.equal(res.ok, true);
   const names = res.packages.map((p) => p.package);
@@ -214,7 +214,7 @@ test('защищённый пакет берётся suspend, когда disable
   assert.equal(state.suspended, false);
 });
 
-test('отчёт по стратегиям: hide и disable на Android 16 недоступны shell-у', async () => {
+test('отчёт по стратегиям: hide и disable на ColorOS 16 недоступны shell-у', async () => {
   const res = await adb.disablePackages('MOCK000ACE5', ['com.oplus.aiunit'], {
     strategies: ['disable-user', 'hide', 'disable'],
   });

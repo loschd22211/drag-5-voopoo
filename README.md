@@ -198,7 +198,7 @@ npm run demo      # то же самое с фейковым adb
 ```
 
 Интерфейс полностью рабочий, но данные — вымышленный китайский Ace 5 (`PKG110`,
-ColorOS 15.0.1). Удобно, чтобы посмотреть, что вообще будет происходить, до подключения
+ColorOS 17). Удобно, чтобы посмотреть, что вообще будет происходить, до подключения
 телефона. В шапке горит бейдж «ДЕМО-РЕЖИМ».
 
 ```bash
@@ -266,7 +266,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\battery-doctor.ps1
 | Симптом | Причина | Что делать |
 | --- | --- | --- |
 | Назначение «не применилось» (значение вернулось) | прошивка защищает `Settings.Secure` от записи через adb | открыть экран «Power button» из шага 5 и переключить руками + `docs/coloros-cn-notes.md` |
-| Значение записалось, но кнопка открывает Breeno | Breeno ставит свой обработчик клавиши поверх роли помощника | `scripts/breeno-off.sh` / `breeno-off.ps1`: перебирают `disable-user → suspend → hide → uninstall` и проверяют результат по `dumpsys`. На ColorOS 16 обычно срабатывает `suspend` |
+| Значение записалось, но кнопка открывает Breeno | Breeno ставит свой обработчик клавиши поверх роли помощника | `scripts/breeno-off.sh` / `breeno-off.ps1`: перебирают `disable-user → suspend → hide → uninstall` и проверяют результат по `dumpsys`. На ColorOS 16 срабатывал `suspend` (на ColorOS 17 не проверялось) |
 | Значение записалось, но кнопка всё равно открывает меню питания | системный обработчик кнопки игнорирует помощника | `docs/coloros-cn-notes.md`, раздел «Activity Launcher / MiCTS» |
 | Breeno снят (`speechassist` off, `assistantscreen` suspended), а кнопка всё равно зовёт Breeno | вызов зашит в обработчик клавиши на уровне фреймворка | `scripts/gemini-trigger.ps1` — ставит ColorGoogle, он перехватывает кнопку сам |
 | `InvalidVariableReferenceWithDrive` в скрипте | `"$имя: текст"` — PS читает `$имя:` как ссылку на диск | писать `"${имя}: текст"`, ловится тестом |

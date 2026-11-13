@@ -3,7 +3,7 @@
 
 /**
  * Фейковый adb для демо-режима и тестов.
- * Имитирует китайский OnePlus Ace 5 (PKG110, ColorOS 15) с установленными
+ * Имитирует китайский OnePlus Ace 5 (PKG110, ColorOS 17) с установленными
  * Google-сервисами, но без назначенного помощника.
  *
  * Данные вымышленные и нужны только для того, чтобы интерфейс можно было
@@ -62,11 +62,11 @@ const PROPS = `[ro.product.brand]: [OnePlus]
 [ro.product.marketname]: [OnePlus Ace 5]
 [ro.build.version.release]: [16]
 [ro.build.version.sdk]: [35]
-[ro.build.display.id]: [V16.1.0]
-[ro.build.version.ota]: [V16.1.0]
+[ro.build.display.id]: [V17.0.0]
+[ro.build.version.ota]: [V17.0.0]
 [ro.build.version.incremental]: [1743500000]
 [ro.build.version.security_patch]: [2025-03-05]
-[ro.build.version.oplusrom]: [ColorOS 16]
+[ro.build.version.oplusrom]: [ColorOS 17]
 [ro.build.region]: []
 [ro.product.locale]: [zh-CN]`;
 
@@ -93,7 +93,8 @@ const PACKAGES = [
 
 /** Эти пакеты ColorOS защищает: pm disable-user отвечает «new state: default» и ничего не меняет. */
 /**
- * Поведение снято с реального OnePlus Ace 5 (PKG110, Android 16, ColorOS 16 CN):
+ * Свойства имитируют ColorOS 17. Поведенческая часть снята с реального
+ * OnePlus Ace 5 (PKG110, ColorOS 16 CN) и на ColorOS 17 не перепроверялась:
  *   pm disable-user  -> «new state: default» (отказ) для защищённых пакетов
  *   pm disable       -> SecurityException: Shell cannot change component state for null to 2
  *   pm hide/unhide   -> SecurityException: Access denied, requires MANAGE_USERS
