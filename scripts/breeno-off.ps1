@@ -6,7 +6,7 @@
 #   ... -Uninstall    для защищённых пакетов: uninstall --user 0 (тоже обратимо)
 #   ... -Restore      вернуть всё как было
 #
-# На ColorOS 16 пакета com.oplus.breeno нет: Breeno разложен на части —
+# На ColorOS 16 пакета com.oplus.breeno нет: Breeno разложен на части (на ColorOS 17 не проверено) —
 #   com.heytap.speechassist          голосовой ассистент
 #   com.coloros.assistantscreen      экран ассистента
 #   com.oplus.aiunit / com.aiunit.aon   AI-движок

@@ -8,7 +8,7 @@
 #   bash scripts/breeno-off.sh --restore       # вернуть всё как было
 #   bash scripts/breeno-off.sh --yes           # без подтверждений
 #
-# На ColorOS 16 пакета com.oplus.breeno нет: Breeno разложен на части —
+# На ColorOS 16 пакета com.oplus.breeno нет: Breeno разложен на части (на ColorOS 17 не проверено) —
 #   com.heytap.speechassist        голосовой ассистент
 #   com.coloros.assistantscreen    экран ассистента
 #   com.oplus.aiunit / com.aiunit.aon   AI-движок (может быть нужен галерее, переводу и т.п.)

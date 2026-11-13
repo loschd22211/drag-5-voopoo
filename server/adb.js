@@ -209,7 +209,8 @@ function prettyActivityLabel(activity) {
  * Насколько экран полезен для задачи «повесить ассистента на кнопку питания».
  * Чем больше число — тем выше в списке. 0 и меньше = мусор, не показываем как рекомендацию.
  *
- * Правила выведены из реального дампа OnePlus Ace 5 (PKG110, Android 16, ColorOS 16):
+ * Правила выведены из реального дампа OnePlus Ace 5 (PKG110, ColorOS 16 CN).
+ * На ColorOS 17 список экранов может отличаться — см. docs/coloros-cn-notes.md (баннер 2026-11-13):
  * там рядом с нужными экранами лежат fuelgauge.AdvancedPowerUsageDetailActivity,
  * TimePower*, PowerUsage* и OneHandedOAssistService — они к кнопке питания отношения не имеют.
  */
@@ -606,7 +607,8 @@ function isDeniedVendorPackage(pkg) {
 }
 
 /**
- * На ColorOS 16 пакета `com.oplus.breeno` больше нет: Breeno разложен на части.
+ * На ColorOS 16 CN пакета `com.oplus.breeno` больше нет: Breeno разложен на части.
+ * На ColorOS 17 не перепроверено — имена могли поменяться, скрипты ищут по регулярке, а не угадывают.
  * Классификация нужна, чтобы не отключать вслепую AI-движок, которым пользуются
  * другие системные функции (галерея, перевод и т.п.).
  */
@@ -661,7 +663,7 @@ const BLOCK_STRATEGIES = [
   { name: 'suspend', cmd: (p) => `pm suspend --user 0 ${p}`, okRe: /new suspended state: true|suspended/i },
   { name: 'hide', cmd: (p) => `pm hide ${p}`, okRe: /new state: (hidden|disabled)/i },
   { name: 'uninstall-user', cmd: (p) => `pm uninstall --user 0 ${p}`, okRe: /Success/i },
-  // на Android 16 shell-у запрещено: SecurityException "Shell cannot change component state"
+  // на Android 16 shell-у запрещено: SecurityException "Shell cannot change component state" (на 17 не проверено)
   { name: 'disable', cmd: (p) => `pm disable --user 0 ${p}`, okRe: /new state: disabled/i },
 ];
 

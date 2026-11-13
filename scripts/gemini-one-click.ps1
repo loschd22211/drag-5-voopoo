@@ -16,7 +16,7 @@
 #   8. замеряет, что реально открывает помощника: удержание питания и жест от
 #      нижнего угла, по 3 попытки, с секундами — без вранья в одну строку
 #
-# Чего НЕ делает (проверено на PKG110, ColorOS 16 — не работает из shell):
+# Чего НЕ делает (проверено на PKG110, ColorOS 16 — не работает из shell; на ColorOS 17 не перепроверено):
 #   * appops set — «uid 2000 does not have MANAGE_APP_OPS_MODES»
 #   * pm grant READ_LOGS — «GRANT_RUNTIME_PERMISSIONS»
 #
@@ -115,7 +115,7 @@ function Set-PowerButtonToGoogle {
   Sh 'settings put global power_button_long_press 5' | Out-Null
   Sh 'settings put secure key_home_long_press_action 2' | Out-Null
   $longPress = Sh 'settings get global power_button_long_press'
-  if ($longPress -match '5') { Say-Dim "power_button_long_press=5 выставлен; на ColorOS 16 удержание питания всё равно открывает меню (docs 2.991)" }
+  if ($longPress -match '5') { Say-Dim "power_button_long_press=5 выставлен; на ColorOS 16 удержание питания всё равно открывает меню (docs 2.991); на ColorOS 17 не проверено" }
   else { Say-No "power_button_long_press не принят (=$longPress)" }
 
   $wake = Sh 'settings get secure speech_assist_power_wakeup'
@@ -148,7 +148,7 @@ function Set-AppRetention {
 }
 
 function Set-LockScreenPlayer {
-  # На ColorOS 16 карточку плеера на локскрине включает отдельный ключ,
+  # На ColorOS 16 карточку плеера на локскрине включает отдельный ключ (на 17 не проверено),
   # и по умолчанию он выключен: сторонние плееры в локскрине не видны.
   $before = Sh 'settings get secure media_controls_lock_screen'
   Sh 'settings put secure media_controls_lock_screen 1' | Out-Null
