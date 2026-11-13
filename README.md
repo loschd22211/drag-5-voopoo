@@ -101,14 +101,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $dir.FullName 'sc
 | `scripts/adb-gemini.sh` | CLI для Linux/macOS — всё то же, но с подтверждением на каждом шаге |
 | `scripts/adb-gemini.ps1` | CLI для Windows (PowerShell) |
 | `tools/mock-adb` | Фейковый adb: демо-режим без телефона, на нём же гоняются тесты |
-| `test/smoke.js` | 13 проверок логики без реального устройства |
+| `test/smoke.js` | 39 проверок логики без реального устройства |
 | `docs/coloros-cn-notes.md` | Что делать, если прошивка блокирует настройку (китайские сборки) |
 | `docs/windows-encoding.md` | Если PowerShell ругается на «отсутствует `}`» и показывает кракозябры |
 | `scripts/breeno-off.sh` / `breeno-off.ps1` | Снять фирменный Breeno, который перехватывает кнопку (обратимо) |
 | `scripts/gemini-trigger.ps1` | Если кнопку не отдаёт даже suspend: ставит ColorGoogle, который забирает кнопку питания и открывает Gemini |
 | `scripts/gemini-one-click.ps1` (`-Test` — только замер, `-Restore` — откат) | **Главный:** один запуск — сам назначает Google помощником, снимает Breeno, включает жест и VPN, проверяет кнопку |
-| `scripts/lockscreen-player.ps1` | включает карточку плеера на экране блокировки и говорит, что мешает (важность канала / нет MediaSession) |
-| `scripts/debloat-cn.ps1` | отключает китайские предустановленные приложения (гейм-бар не трогает) и ускоряет анимации; `-Restore` возвращает |
+| `scripts/battery-doctor.ps1` (`-Fix`, `-Restrict`/`-Unrestrict`, `-Unwhitelist`) | Диагностика батареи: здоровье АКБ, расход **с последней зарядки** по приложениям, вейклоки, Doze и его белый список, экран и яркость. Ничего не меняет без явных ключей; ключи `settings` не пишет вообще |
+| `scripts/debloat-cn.ps1` | отключает китайские предустановленные приложения (гейм-бар, погода и здоровье не трогает) и ускоряет анимации; `-Restore` возвращает |
 | `scripts/left-panel.ps1` (`-Find` — только посмотреть, `-Restore` — вернуть) | Убирает левую страницу рабочего стола: просит открыть её, снимает разметку экрана (`uiautomator dump`) и слои, гасит **только** тот пакет, что её рисует, из белого списка |
 | `scripts/widgets-fix.ps1` | Возвращает виджеты: включает все погашенные пакеты-поставщики и показывает, у кого виджеты есть; `-Find` — только посмотреть |
 | `scripts/steps-widget.ps1` | Возвращает счётчик шагов: включает «Здоровье» (OHealth) обратно, проверяет датчик и открывает приложение для виджета |
@@ -202,7 +202,7 @@ ColorOS 15.0.1). Удобно, чтобы посмотреть, что вооб�
 телефона. В шапке горит бейдж «ДЕМО-РЕЖИМ».
 
 ```bash
-npm test          # 13 проверок на том же фейковом adb
+npm test          # 39 проверок на том же фейковом adb
 ```
 
 ---
@@ -231,6 +231,34 @@ adb shell settings delete secure voice_interaction_service
 
 ---
 
+## Батарея быстро садится
+
+Телефон подключён кабелем, запусти:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\battery-doctor.ps1
+```
+
+Без ключей скрипт **только читает** и печатает отчёт: здоровье батареи (если
+`health` не 2 — износ, лечат только сервис/замена АКБ), температуру, расход
+**с последней зарядки по приложениям**, вейклоки, состояние Doze и белый список
+(те, кто никогда не уходит в сон), частоту и яркость экрана, выключенные пакеты.
+
+Дальше по фактам:
+
+* конкретный пакет с большим расходом и не нужен в фоне →
+  `... -Restrict <пакет>` (обратимо: `-Unrestrict <пакет>`);
+* китайский софт, которым в России не пользуешься (HeyTap-маркет, новости, читалки) →
+  `scripts\debloat-cn.ps1` (отключит обратимо, откат — `-Restore`);
+* после деблоата пропали виджеты → `scripts\widgets-fix.ps1`;
+  шаг-виджет → `scripts\steps-widget.ps1`;
+* `-Fix` — единственное, что скрипт включает сам: Doze. Ключи настроек
+  (яркость, частота, анимации, тач-режим) он **не пишет никогда**.
+
+Если не понял вывод — пришли его целиком, разберём по строкам.
+
+---
+
 ## Если не сработало
 
 Три самых частых исхода и что делать:
@@ -244,7 +272,6 @@ adb shell settings delete secure voice_interaction_service
 | `InvalidVariableReferenceWithDrive` в скрипте | `"$имя: текст"` — PS читает `$имя:` как ссылку на диск | писать `"${имя}: текст"`, ловится тестом |
 | Замер кнопки всегда `0 из 5` | ColorOS не исполняет `input keyevent --longpress 26` и `input swipe` для помощника | жать руками, `-Test` слушает окна, см. 2.992 |
 | `am start …robin.main.MainActivity` → `SecurityException: not exported` | активность Gemini не exported для shell | проверять только через `input keyevent --longpress 26`, см. 2.998 |
-| Плеер не виден на экране блокировки | `media_controls_lock_screen=0` | `settings put secure media_controls_lock_screen 1`, см. 2.996 |
 | `pm uninstall` → `DELETE_FAILED_INTERNAL_ERROR` | ColorOS не отдаёт пакет этим путём | `scripts/power-key-reset.ps1` перебирает `pm uninstall --user 0`, `cmd package uninstall`, затем `pm suspend` |
 | Долгое нажатие питания зовёт Breeno, а хочется меню выключения | ключ `speech_assist_power_wakeup=1` | `adb shell settings put secure speech_assist_power_wakeup 0` (обратно — `1`) |
 | Gemini: «не поддерживается в вашей стране» | региональная блокировка Google (IP + регион аккаунта) | см. 2.99: проверка через инкогнито и country-association-form |
@@ -291,6 +318,7 @@ scripts/
   oneclick.cmd      двойной клик для Windows
   gemini-trigger.ps1  ColorGoogle: кнопка питания -> Gemini (последний рубеж)
   debloat-market.ps1  магазин HeyTap и сканер APK: установка без надзирателя
+  battery-doctor.ps1  диагностика батареи: кто жрёт + точечные исправления
   adb-gemini.sh     CLI для Linux/macOS (с вопросами)
   adb-gemini.ps1    CLI для Windows
 tools/
