@@ -4,7 +4,8 @@
 #   ... -Restore   включить всё обратно
 #
 # Ничего не удаляет: pm disable-user --user 0, всё возвращается ключом -Restore.
-# Game Center и гейм-бар не трогаем (см. $Keep).
+# Game Center и гейм-бар не трогаем (см. $Keep). Погода (com.coloros.weather2) не в
+# списке: она даёт виджет и данные на стол — виджеты дороже одной «китайской» иконки.
 #
 # Файл в UTF-8 с BOM (см. docs/windows-encoding.md).
 
@@ -15,6 +16,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+$ScriptVersion = "2026-11-13.1"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
   chcp 65001 > $null
@@ -82,8 +84,7 @@ $Targets = @(
   'com.coloros.assistantscreen',
   'com.heytap.speechassist',
   'com.coloros.familyguard',
-  'com.oplus.aimemory',
-  'com.coloros.weather2'
+  'com.oplus.aimemory'
 )
 
 # Что не трогаем ни при каких условиях (гейм-бар, игры, связь).
@@ -124,6 +125,7 @@ Connect-Adb
 
 $model = Sh 'getprop ro.product.model'
 $rom = Sh 'getprop ro.build.version.oplusrom'
+Write-Dim ("версия скрипта: " + $ScriptVersion)
 Write-Dim ("{0}, прошивка {1}" -f $model, $rom)
 
 if ($Restore) {

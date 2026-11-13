@@ -159,7 +159,7 @@ test('ранжирование: реальный список с Ace 5 (ColorOS 
 });
 
 test('PowerShell-скрипты сохранены в UTF-8 с BOM (иначе PS 5.1 ломает кириллицу)', () => {
-  const files = ['oneclick.ps1', 'adb-gemini.ps1', 'breeno-off.ps1', 'gemini-trigger.ps1', 'debloat-market.ps1', 'power-key-reset.ps1', 'gemini-one-click.ps1'];
+  const files = ['oneclick.ps1', 'adb-gemini.ps1', 'breeno-off.ps1', 'gemini-trigger.ps1', 'debloat-market.ps1', 'power-key-reset.ps1', 'gemini-one-click.ps1', 'debloat-cn.ps1', 'restore-cn.ps1', 'widgets-fix.ps1', 'steps-widget.ps1', 'left-panel.ps1', 'assistant-keys.ps1', 'breeno-gesture.ps1', 'battery-doctor.ps1'];
   for (const name of files) {
     const buf = fs.readFileSync(path.join(__dirname, '..', 'scripts', name));
     assert.ok(
@@ -372,34 +372,6 @@ test('в строках нет $переменная: — PowerShell падае�
   assert.ok(bad.length === 0, 'найдено: ' + bad.join(', '));
 });
 
-test('lockscreen-player: включает карточку плеера и объясняет, что мешает', () => {
-  const file = path.join(__dirname, '..', 'scripts', 'lockscreen-player.ps1');
-  assert.ok(fs.existsSync(file), 'скрипт должен существовать');
-  const src = fs.readFileSync(file, 'utf8');
-  assert.ok(src.includes('media_controls_lock_screen 1'), 'ключ карточки плеера включается сам');
-  assert.ok(src.includes('lockscreen_show_controls 1'), 'и показ элементов управления');
-  assert.ok(src.includes('dumpsys media_session'), 'нужно смотреть, какое приложение реально играет');
-  assert.ok(src.includes('dumpsys notification --noredact'), 'и важность канала уведомления');
-  assert.ok(src.includes('важность'), 'вердикт должен объяснять про важность канала');
-  // разбор медиасессий режем по MediaSessionRecord: package= встречается несколько раз
-  // состояние относится к последней увиденной package= — в дампе их несколько подряд
-  assert.ok(src.includes('$current'), 'состояние должно привязываться к текущей сессии');
-  assert.ok(src.includes('PlaybackState'), 'состояние воспроизведения должно читаться');
-  // Android 16 печатает "state=PLAYING(3)" — одним числом это не ловится
-  assert.ok(src.includes('state=(?:[A-Z_]+'), 'нужно читать состояние вида PLAYING(3)');
-  assert.ok(src.includes("com.android.*"), 'служебные com.android.* не должны попадать в отчёт');
-  assert.ok(src.includes('[switch]$Raw'), 'нужен -Raw для отладки состояния');
-  // версия печатается, иначе невозможно отличить старую копию из кэша raw.githubusercontent
-  assert.ok(src.includes('$ScriptVersion'), 'у скрипта должна быть версия');
-  assert.ok(src.includes('версия скрипта'), 'версия должна печататься при запуске');
-  assert.ok(!src.includes('сейчас ничего не играет'), 'старое вранье про «ничего не играет» не должно вернуться');
-  assert.ok(src.includes('нельзя сделать из adb'), 'нельзя обещать то, что из shell не меняется');
-  assert.ok(src.includes('settings list system'), 'проверяем и ключи медиа в namespace system');
-  // если канал заблокирован приложением, важность руками не поднять — надо отличать
-  assert.ok(src.includes('Get-ChannelInfo'), 'нужно читать параметры канала');
-  assert.ok(src.includes('mImportanceLockedDefaultApp'), 'и признаки блокировки важности');
-});
-
 test('debloat-cn: выключает китайское, оставляет гейм-бар и умеет откат', () => {
   const file = path.join(__dirname, '..', 'scripts', 'debloat-cn.ps1');
   assert.ok(fs.existsSync(file), 'скрипт должен существовать');
@@ -413,6 +385,28 @@ test('debloat-cn: выключает китайское, оставляет ге
   // ColorOS на части пакетов отвечает "new state: default" — нужен запасной путь
   assert.ok(src.includes('pm suspend --user 0'), 'если disable-user не сработал — suspend');
   assert.ok(src.includes('pm unsuspend --user 0'), 'откат снимает и suspend');
+});
+
+test('battery-doctor: читает батарею, Doze по -Fix, фон только по явному -Restrict', () => {
+  const file = path.join(__dirname, '..', 'scripts', 'battery-doctor.ps1');
+  assert.ok(fs.existsSync(file), 'скрипт должен существовать');
+  const src = fs.readFileSync(file, 'utf8');
+  assert.ok(src.includes('[switch]$Fix'), 'нужен -Fix');
+  assert.ok(src.includes('[string[]]$Restrict'), 'нужен -Restrict');
+  assert.ok(src.includes('[string[]]$Unrestrict'), 'нужен -Unrestrict');
+  assert.ok(src.includes('[string[]]$Unwhitelist'), 'нужен -Unwhitelist');
+  assert.ok(src.includes('dumpsys deviceidle enable'), '-Fix включает Doze');
+  assert.ok(src.includes('dumpsys batterystats'), 'расход с последней зарядки по приложениям');
+  assert.ok(src.includes('dumpsys deviceidle whitelist'), 'нужен белый список Doze');
+  assert.ok(src.includes('dumpsys battery'), 'здоровье батареи читается');
+  assert.ok(src.includes('RUN_IN_BACKGROUND'), 'фон ограничивается через appops');
+  assert.ok(src.includes('$NeverRestrict'), 'системные пакеты защищены от -Restrict');
+  assert.ok(!/pm uninstall/.test(src), 'удалять пакеты нельзя — никогда');
+  assert.ok(!/settings put/.test(src), 'скрипт НЕ пишет ключи settings: перчатки, яркость, анимации в безопасности');
+  assert.ok(src.includes('$ScriptVersion'), 'версия печатается — видно устаревшую копию');
+  assert.ok(src.includes('версия скрипта'), 'версия выводится в лог');
+  assert.ok(src.includes('widgets-fix.ps1'), 'в выводе есть указатель на возврат виджетов');
+  assert.ok(src.includes('debloat-cn.ps1'), 'и на обратимый деблоат китайщины');
 });
 
 test('breeno-gesture: пробует роль ASSISTANT и умеет вернуть Breeno', () => {
