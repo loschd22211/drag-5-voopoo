@@ -121,10 +121,18 @@ function Restore-Backup {
     'system.screen_off_timeout' = 'settings put system screen_off_timeout'
     'global.low_power'          = 'settings put global low_power'
   }
+  $deleteMap = @{
+    'secure.peak_refresh_rate'  = 'settings delete secure peak_refresh_rate'
+    'secure.min_refresh_rate'   = 'settings delete secure min_refresh_rate'
+    'system.screen_off_timeout' = 'settings delete system screen_off_timeout'
+    'global.low_power'          = 'settings delete global low_power'
+  }
   foreach ($k in @('secure.peak_refresh_rate','secure.min_refresh_rate','system.screen_off_timeout','global.low_power')) {
     $v = [string]$snap.$k
     if ([string]::IsNullOrWhiteSpace($v) -or $v -match '(?i)^(null|exception)') {
-      Write-Warn ("  {0}: в снимке нечего восстанавливать, пропускаю" -f $k)
+      Write-Warn ("  {0}: в снимке значения не было (ключ отсутствовал) — удаляю, чтобы вернуть телефон к исходному состоянию" -f $k)
+      Sh ($deleteMap[$k]) | Out-Null
+      Write-Ok ("  {0} удалён" -f $k)
       continue
     }
     Sh ($map[$k] + ' ' + $v) | Out-Null
