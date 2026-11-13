@@ -38,7 +38,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$ScriptVersion = "2026-11-13.2"
+$ScriptVersion = "2026-11-13.3"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
   chcp 65001 > $null
@@ -135,7 +135,19 @@ function Test-PkgName($pkg) {
 
 # ---------------------------------------------------------------- действия
 
+function Normalize-PkgList($pkgs) {
+  $out = @()
+  foreach ($item in $pkgs) {
+    foreach ($part in ($item -split ',')) {
+      $t = $part.Trim()
+      if ($t) { $out += $t }
+    }
+  }
+  return $out
+}
+
 function Invoke-Restrict($pkgs, $deny) {
+  $pkgs = Normalize-PkgList $pkgs
   foreach ($pkg in $pkgs) {
     if (-not (Test-PkgName $pkg)) { Write-Warn ("{0}: не похоже на имя пакета — пропускаю" -f $pkg); continue }
     if (Test-Protected $pkg) { Write-Warn ("{0}: системный/нужный пакет — не трогаю" -f $pkg); continue }
@@ -154,6 +166,7 @@ function Invoke-Restrict($pkgs, $deny) {
 }
 
 function Invoke-Unwhitelist($pkgs) {
+  $pkgs = Normalize-PkgList $pkgs
   foreach ($pkg in $pkgs) {
     if (-not (Test-PkgName $pkg)) { Write-Warn ("{0}: не похоже на имя пакета — пропускаю" -f $pkg); continue }
     if (Test-Protected $pkg) { Write-Warn ("{0}: системный/нужный пакет — не трогаю" -f $pkg); continue }

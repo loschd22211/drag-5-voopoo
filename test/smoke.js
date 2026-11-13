@@ -401,6 +401,7 @@ test('battery-doctor: читает батарею, Doze по -Fix, фон тол
   assert.ok(src.includes('dumpsys battery'), 'здоровье батареи читается');
   assert.ok(src.includes('RUN_IN_BACKGROUND'), 'фон ограничивается через appops');
   assert.ok(src.includes('$NeverRestrict'), 'системные пакеты защищены от -Restrict');
+  assert.ok(src.includes('Normalize-PkgList'), 'пакеты можно передавать и через запятую одной строкой');
   assert.ok(!/pm uninstall/.test(src), 'удалять пакеты нельзя — никогда');
   assert.ok(!/settings put/.test(src), 'скрипт НЕ пишет ключи settings: перчатки, яркость, анимации в безопасности');
   assert.ok(src.includes('$ScriptVersion'), 'версия печатается — видно устаревшую копию');
