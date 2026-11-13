@@ -489,6 +489,17 @@ test('restore-cn: возвращает всё выключенное одной 
   assert.ok(src.includes('^com\\.(heytap|coloros|oplus|oppo|nearme|oneplus)'), 'берёт китайские префиксы');
 });
 
+test('battery-save: частота 60 Гц с откатом, яркость и glove не трогает', () => {
+  const file = path.join(__dirname, '..', 'scripts', 'battery-save.ps1');
+  assert.ok(fs.existsSync(file), 'скрипт должен существовать');
+  const src = fs.readFileSync(file, 'utf8');
+  assert.ok(src.includes('peak_refresh_rate'), 'частота через peak_refresh_rate');
+  assert.ok(src.includes('-Restore'), 'есть откат');
+  assert.ok(!src.includes('screen_brightness'), 'яркость не трогает');
+  assert.ok(!/settings put .*oplus_glove_mode/.test(src), 'режим перчаток: только чтения нет и записи нет');
+  assert.ok(!/pm (disable|suspend|uninstall)/.test(src), 'приложения не выключает');
+});
+
 test('assistant-keys: показывает, что про помощника реально есть в прошивке', () => {
   const file = path.join(__dirname, '..', 'scripts', 'assistant-keys.ps1');
   assert.ok(fs.existsSync(file), 'скрипт должен существовать');
