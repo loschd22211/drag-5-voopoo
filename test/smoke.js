@@ -495,6 +495,7 @@ test('battery-save: частота 60 Гц с откатом, яркость и 
   const src = fs.readFileSync(file, 'utf8');
   assert.ok(src.includes('peak_refresh_rate'), 'частота через peak_refresh_rate');
   assert.ok(src.includes('-Restore'), 'есть откат');
+  assert.ok(src.includes('settings delete'), 'null в снимке = ключ отсутствовал — откат удаляет его обратно');
   assert.ok(!src.includes('screen_brightness'), 'яркость не трогает');
   assert.ok(!/settings put .*oplus_glove_mode/.test(src), 'режим перчаток: только чтения нет и записи нет');
   assert.ok(!/pm (disable|suspend|uninstall)/.test(src), 'приложения не выключает');
