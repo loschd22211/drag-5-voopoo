@@ -24,6 +24,16 @@
   документы и комментарии помечены «на ColorOS 17 не проверено», логика скриптов
   не менялась. Для перепроверки Breeno-пакетов на 17-й:
   `adb shell pm list packages | findstr /i "breeno speechassist assistantscreen aiunit"`.
+* **battery-doctor на V17.0.0 (первый реальный прогон, 2026-11-13)**: health=2
+  (норма), экран включён 6h4m, 120 Гц, автояркость на пределе (995 в шкале прошивки) —
+  главный кандидат на посадку; самих прожорливых фоновых приложений не видно
+  (187/179 mAh без имён — формат A17, в v2026-11-13.2 добавлен сырой вывод mAh-строк
+  и fallback первых строк `dumpsys deviceidle`). Doze user-whitelist ~22 записи
+  (вкл. HeyTap market/browser/themestore — уже suspended;Alarm clock, mcs и gms —
+  трогать нельзя). Ключи перчаток на месте: `secure oplus_glove_mode=1`
+  (основной включён; system `oplus_customize_glove_mode_enabled=0` — второй переключатель).
+  Выключено деблоатом на 17-й: browser, market, themestore, video, assistantscreen,
+  familyguard, aimemory (всего 7). Screenshot яркости: «995 из 255» — шкала прошивки.
 * **debloat-cn.ps1**: `com.coloros.weather2` вынесен из списка выключения —
   погода даёт виджет (правило: ничего, что даёт виджеты и данные). Скрипт печатает
   `версия скрипта: 2026-11-13.1`.

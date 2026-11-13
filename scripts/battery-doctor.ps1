@@ -38,7 +38,7 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
-$ScriptVersion = "2026-11-13.1"
+$ScriptVersion = "2026-11-13.2"
 try {
   [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
   chcp 65001 > $null
@@ -224,6 +224,8 @@ if ($null -ne $temp) {
   $t = [math]::Round($temp / 10.0, 1)
   $tempText = ("температура: {0}°C" -f $t)
   if ($t -ge 43) { Write-Warn ($tempText + " — горячо: чехол, длительная зарядка, игры — убери лишнее") } else { Write-Dim $tempText }
+} else {
+  Write-Dim "температуры в dumpsys battery нет — на ColorOS 17 этот блок может называться иначе"
 }
 if ($null -ne $health) {
   if ($health -eq 2) { Write-Ok "здоровье батареи: норма (health=2)" }
@@ -270,10 +272,22 @@ if ($entries.Count -eq 0) {
   Write-Dim ("показан расход {0}, топ по mAh:" -f $since)
   foreach ($e in $top) {
     $name = $e.Pkg
-    if (-not $name) { $name = '(не пакет с точкой — см. строку)' }
+    if (-not $name) { $name = '(не распознан — сырая строка ниже)' }
     $pct = ''
     if ($e.Pct) { $pct = " ({0})" -f $e.Pct }
     Write-Dim ("  {0,8:N1} mAh{1}  {2}" -f $e.Mah, $pct, $name)
+  }
+  $missingPkgs = @($top | Where-Object { -not $_.Pkg }).Count
+  if ($missingPkgs -gt 0) {
+    Write-Dim "имена не распознаны (Android 17 печатает расход в другом формате) — сырые строки как есть:"
+    $rawCount = 0
+    foreach ($line in ($bs -split "`r?`n")) {
+      if ($line -match 'mAh' -and $line -notmatch '(?i)capacity') {
+        Write-Dim ("      " + ($line.Trim() -replace '\s+', ' '))
+        $rawCount++
+        if ($rawCount -ge 20) { break }
+      }
+    }
   }
   Write-Dim "подозрительные цифры с большим mAh — кандидаты в -Restrict (после твоего решения)"
 }
@@ -281,11 +295,13 @@ if ($entries.Count -eq 0) {
 # ---- 3. Doze: состояние и белый список ------------------------------------
 Write-Step "Doze (сон в простое) и белый список"
 $idle = Sh 'dumpsys deviceidle'
-$idleLines = @($idle -split "`r?`n" | Where-Object { $_ -match '(?i)(deep|light).*(idle|maintenance|enabled)|enabled|mState|idle' } | Select-Object -First 8)
+$idleLines = @($idle -split "`r?`n" | Where-Object { $_ -match 'mLightIdleEnabled|mDeepIdleEnabled|mState|state:|maintenance|Deep idle|Light idle' } | Select-Object -First 10)
 if ($idleLines.Count) {
   foreach ($l in $idleLines) { Write-Dim ($l.Trim()) }
 } else {
-  Write-Dim (($idle -replace '\s+', ' ').Substring(0, [math]::Min(300, $idle.Length)))
+  Write-Dim "состояние Doze явными ключами не печатается — первые строки как есть:"
+  $head = @($idle -split "`r?`n" | Where-Object { $_.Trim() -ne '' } | Select-Object -First 12)
+  foreach ($l in $head) { Write-Dim ("  " + $l.Trim()) }
 }
 $wl = Sh 'dumpsys power'
 $wlLines = @($wl -split "`r?`n" | Where-Object { $_ -match '(?i)wake\s*lock|mWakefulness|last awake' } | Select-Object -First 10)
